@@ -4,43 +4,11 @@
 
 #include <SPI.h>
 
-// ESP32-2432S028R integrated ILI9341 wiring. Defining the setup here keeps
-// TFT_eSPI independent of a machine-local User_Setup.h.
-#define USER_SETUP_LOADED
-#define ILI9341_DRIVER
-#define TFT_WIDTH  240
-#define TFT_HEIGHT 320
-#define TFT_MISO 12
-#define TFT_MOSI 13
-#define TFT_SCLK 14
-#define TFT_CS   15
-#define TFT_DC    2
-#define TFT_RST  -1
-#define LOAD_GLCD
-#define LOAD_FONT2
-#define LOAD_FONT4
-#define SPI_FREQUENCY 40000000
-#include <TFT_eSPI.h>
-#include <XPT2046_Touchscreen.h>
-
-// Override loopTask stack size to 64KB. arduino-esp32 v2.0.17 declares
-// `size_t getArduinoLoopTaskStackSize(void);` with C++ linkage in Arduino.h
-// (not extern "C"), so our override must match that linkage exactly.
-size_t getArduinoLoopTaskStackSize() {
-  return 64 * 1024;
-}
-
-// ─── Pin Definitions ───────────────────────────────────────────────────────
-#define TFT_BL_PIN    21
-#define TOUCH_CS_PIN  33
-#define TOUCH_IRQ_PIN 36
-#define TOUCH_MOSI    32
-#define TOUCH_MISO    39
-#define TOUCH_SCK     25
-
-// ─── Display & Touch Objects ───────────────────────────────────────────────
-
-// Hoisted type definitions
+// Hoisted type definitions. Arduino's auto-prototype generator inserts
+// function prototypes right before the first function definition in the
+// file (getArduinoLoopTaskStackSize, below) — these structs must be fully
+// defined before that point or the generated prototypes referencing
+// Move*/GameState& fail to compile.
 struct Move {
   int fromRow, fromCol, toRow, toCol;
   int capturedPiece, capturedColor;
@@ -64,6 +32,36 @@ struct GameState {
   int currentPlayer;      // WHITE_PIECE or BLACK_PIECE
 };
 
+// ESP32-2432S028R integrated ILI9341 wiring: pins, HSPI-vs-VSPI host, and
+// panel geometry all come from the *machine's installed* TFT_eSPI/User_Setup.h
+// (~/Arduino/libraries/TFT_eSPI/User_Setup.h on this dev box), not a
+// sketch-local override. TFT_eSPI.cpp is a separate translation unit
+// compiled once as a library — a `#define USER_SETUP_LOADED` block here only
+// changes what *this .ino* sees, not what the already-compiled driver code
+// was built against, so a sketch-local redefine here silently desyncs the
+// two and tft.init() hangs (WDT reset) despite compiling cleanly. This
+// board's installed User_Setup.h already targets this exact CYD panel
+// (pins 12/13/14/15/2, HSPI, ILI9341, BGR order) and reports 240x320 at
+// rotation(0), matching this sketch's portrait board layout as-is.
+#include <TFT_eSPI.h>
+#include <XPT2046_Touchscreen.h>
+
+// Override loopTask stack size to 64KB. arduino-esp32 v2.0.17 declares
+// `size_t getArduinoLoopTaskStackSize(void);` with C++ linkage in Arduino.h
+// (not extern "C"), so our override must match that linkage exactly.
+size_t getArduinoLoopTaskStackSize() {
+  return 64 * 1024;
+}
+
+// ─── Pin Definitions ───────────────────────────────────────────────────────
+#define TFT_BL_PIN    21
+#define TOUCH_CS_PIN  33
+#define TOUCH_IRQ_PIN 36
+#define TOUCH_MOSI    32
+#define TOUCH_MISO    39
+#define TOUCH_SCK     25
+
+// ─── Display & Touch Objects ───────────────────────────────────────────────
 
 // Forward declarations
 void initBoard(GameState &gs);

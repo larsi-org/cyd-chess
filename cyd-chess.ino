@@ -1,7 +1,7 @@
 // Chess game for ESP32-2432S028R with ILI9341 TFT display
-// Player (White) vs AI (Black) -- H.G. Muller's micro-Max engine plus a
-// small opening book (see the "micro-Max chess engine" / "Opening Book"
-// sections below)
+// Player (White) vs AI (Black) -- H.G. Muller's micro-Max engine (see the
+// "micro-Max chess engine" section below) plus a small opening book
+// (book.h/book.cpp) and piece graphics (pieces.h) split into their own files
 // Touch screen for piece selection and movement, one-level undo
 
 #include <SPI.h>

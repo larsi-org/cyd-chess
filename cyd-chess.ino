@@ -86,15 +86,14 @@ bool pieceSelected = false;
 Move legalMoves[256];
 int legalMoveCount = 0;
 bool gameOver = false;
-int humanColor = WHITE_PIECE; // which side the player is -- MENU picks this
-bool inMenu = false;          // showing the color-choice menu, board hidden
+int humanColor = WHITE_PIECE; // which side the player is -- MENU sets this, any time
+bool inMenu = false;          // showing the menu screen, board hidden
 
-// MENU's second screen -- difficulty. Default Expert (index 3) so a fresh
-// boot, before anyone's touched the menu, plays exactly like this sketch did
-// before this feature existed.
+// MENU's difficulty screen, reached via its NEW GAME button. Default Expert
+// (index 3) so a fresh boot, before anyone's touched the menu, plays exactly
+// like this sketch did before this feature existed.
 int aiStrength = 3; // 0=Easy 1=Medium 2=Hard 3=Expert
 bool inDifficultyMenu = false;
-int pendingHumanColor; // color picked on screen 1, held until screen 2 picks a level
 
 const char *STRENGTH_NAMES[4] = {"EASY", "MEDIUM", "HARD", "EXPERT"};
 // Node budget: see mmNodeBudget's own comment in micromax.cpp -- lower means
@@ -143,7 +142,12 @@ void showTurnStatus() {
   }
 }
 
+// Remembered so a later redraw (e.g. returning from the MENU after switching
+// sides right after a checkmate/stalemate) can restore the same banner.
+const char *lastGameOverMsg = "";
+
 void drawGameOver(const char *msg) {
+  lastGameOverMsg = msg;
   tft.fillRect(20, 100, 200, 60, TFT_RED);
   tft.setTextColor(TFT_WHITE, TFT_RED);
   tft.setTextSize(2);
@@ -270,37 +274,59 @@ bool isTouchOnUndoButton() {
 }
 
 // ─── Menu screen ────────────────────────────────────────────────────────────
-// Covers the whole screen (board/buttons hidden) while inMenu is true --
-// currently offers one real choice: which color the human plays.
-#define MENU_BTN_W      200
-#define MENU_BTN_H      60
-#define MENU_BTN_X      ((240 - MENU_BTN_W) / 2)
-#define MENU_WHITE_BTN_Y 120
-#define MENU_BLACK_BTN_Y 200
+// Covers the whole screen (board/buttons hidden) while inMenu is true. Two
+// independent things live here: starting a fresh game (NEW GAME, which goes
+// on to the difficulty screen below), and choosing which color the human
+// plays right now (PLAY WHITE/PLAY BLACK) -- the latter works standalone,
+// mid-game, without resetting anything (see switchHumanColor()), so a real
+// board position can have its human/AI sides swapped on demand -- a teaching
+// technique ("finish what the other person started").
+#define MENU_BTN_W          200
+#define MENU_BTN_H          55
+#define MENU_BTN_X          ((240 - MENU_BTN_W) / 2)
+#define MENU_NEWGAME_BTN_Y  95
+#define MENU_WHITE_BTN_Y    160
+#define MENU_BLACK_BTN_Y    225
 
 void drawMenuScreen() {
   tft.fillScreen(COLOR_BG);
   tft.setTextSize(2);
   tft.setTextColor(TFT_YELLOW, COLOR_BG);
-  tft.setCursor(48, 60);
-  tft.print("New Game");
+  tft.setCursor(60, 28);
+  tft.print("Menu");
+
+  tft.setTextSize(1);
+  tft.setTextColor(TFT_WHITE, COLOR_BG);
+  char caption[40];
+  snprintf(caption, sizeof(caption), "Now playing: %s, %s",
+           humanColor == WHITE_PIECE ? "White" : "Black", STRENGTH_NAMES[aiStrength]);
+  tft.setCursor((240 - (int)strlen(caption) * 6) / 2, 58);
+  tft.print(caption);
+
+  drawTextButton(MENU_BTN_X, MENU_NEWGAME_BTN_Y, MENU_BTN_W, MENU_BTN_H,
+                 "NEW GAME", 8, TFT_DARKGREEN, TFT_GREEN);
   drawTextButton(MENU_BTN_X, MENU_WHITE_BTN_Y, MENU_BTN_W, MENU_BTN_H,
-                 "NEW GAME WHITE", 15, COLOR_WHITE_P, TFT_BLACK, TFT_BLACK);
+                 "PLAY WHITE", 10, COLOR_WHITE_P, TFT_BLACK, TFT_BLACK);
   drawTextButton(MENU_BTN_X, MENU_BLACK_BTN_Y, MENU_BTN_W, MENU_BTN_H,
-                 "NEW GAME BLACK", 15, COLOR_BLACK_P, TFT_WHITE, TFT_WHITE);
+                 "PLAY BLACK", 10, COLOR_BLACK_P, TFT_WHITE, TFT_WHITE);
 }
 
-bool isTouchOnNewGameWhiteButton() {
+bool isTouchOnMenuNewGameButton() {
+  return isTouchInButton(MENU_BTN_X, MENU_NEWGAME_BTN_Y, MENU_BTN_W, MENU_BTN_H);
+}
+
+bool isTouchOnPlayWhiteButton() {
   return isTouchInButton(MENU_BTN_X, MENU_WHITE_BTN_Y, MENU_BTN_W, MENU_BTN_H);
 }
 
-bool isTouchOnNewGameBlackButton() {
+bool isTouchOnPlayBlackButton() {
   return isTouchInButton(MENU_BTN_X, MENU_BLACK_BTN_Y, MENU_BTN_W, MENU_BTN_H);
 }
 
-// ─── Difficulty screen (MENU's second step) ────────────────────────────────
-// Shown right after color choice, before resetGame() actually starts the
-// game -- see pendingHumanColor above.
+// ─── Difficulty screen (reached via MENU's NEW GAME button) ────────────────
+// Picking a level here starts a fresh game via resetGame(), which uses
+// whatever humanColor is currently set -- color is chosen separately, via
+// MENU's own PLAY WHITE/PLAY BLACK buttons, and isn't part of this flow.
 #define DIFF_BTN_W    200
 #define DIFF_BTN_H    45
 #define DIFF_BTN_X    ((240 - DIFF_BTN_W) / 2)
@@ -331,8 +357,27 @@ bool isTouchOnDifficultyButton(int idx) {
   return isTouchInButton(DIFF_BTN_X, DIFF_BTN_Y(idx), DIFF_BTN_W, DIFF_BTN_H);
 }
 
-void resetGame(int newHumanColor) {
-  humanColor = newHumanColor;
+// Changes which color the human plays *without* resetting the game -- supports
+// switching sides mid-game (a teaching technique: "finish what the other
+// person started"). If it's currently the new AI color's turn, the AI just
+// picks up from here on the very next loop() iteration -- no special-casing
+// needed, the same mechanism that already makes "AI moves first" work when
+// starting a new game as Black.
+void switchHumanColor(int newColor) {
+  humanColor = newColor;
+  pieceSelected = false;
+  selectedRow = -1;
+  selectedCol = -1;
+  legalMoveCount = 0;
+  tft.fillScreen(COLOR_BG);
+  drawBoard(gs); // re-renders flipped/unflipped per the new boardFlipped()
+  drawMenuButton();
+  drawUndoButton();
+  if (gameOver) drawGameOver(lastGameOverMsg);
+  showTurnStatus();
+}
+
+void resetGame() {
   initBoard(gs);
   microMaxInit();
   mmNodeBudget = STRENGTH_NODE_BUDGET[aiStrength];
@@ -563,40 +608,48 @@ void loop() {
   // (yield() does NOT fix this — it only schedules equal-or-higher priority.)
   delay(1);
 
-  // Color-choice menu: covers the whole screen, so it's checked before (and
+  // Menu screen: covers the whole screen, so it's checked before (and
   // instead of) the Menu/Undo buttons below, which aren't visible right now.
-  // Picking a color doesn't start the game yet -- it moves on to the
-  // difficulty screen below.
+  // PLAY WHITE/BLACK apply immediately (switchHumanColor(), no board reset,
+  // works mid-game); NEW GAME moves on to the difficulty screen below.
   if (inMenu) {
-    if (isTouchOnNewGameWhiteButton()) {
+    if (isTouchOnMenuNewGameButton()) {
       delay(50); // debounce
-      if (isTouchOnNewGameWhiteButton()) {
+      if (isTouchOnMenuNewGameButton()) {
         unsigned long _waitStart = millis();
         while (touch.touched() && millis() - _waitStart < 2000) { delay(10); }
-        pendingHumanColor = WHITE_PIECE;
         inMenu = false;
         inDifficultyMenu = true;
         drawDifficultyMenu();
       }
       return;
     }
-    if (isTouchOnNewGameBlackButton()) {
+    if (isTouchOnPlayWhiteButton()) {
       delay(50); // debounce
-      if (isTouchOnNewGameBlackButton()) {
+      if (isTouchOnPlayWhiteButton()) {
         unsigned long _waitStart = millis();
         while (touch.touched() && millis() - _waitStart < 2000) { delay(10); }
-        pendingHumanColor = BLACK_PIECE;
         inMenu = false;
-        inDifficultyMenu = true;
-        drawDifficultyMenu();
+        switchHumanColor(WHITE_PIECE);
+      }
+      return;
+    }
+    if (isTouchOnPlayBlackButton()) {
+      delay(50); // debounce
+      if (isTouchOnPlayBlackButton()) {
+        unsigned long _waitStart = millis();
+        while (touch.touched() && millis() - _waitStart < 2000) { delay(10); }
+        inMenu = false;
+        switchHumanColor(BLACK_PIECE);
       }
       return;
     }
     return;
   }
 
-  // Difficulty menu: MENU's second screen, shown after color choice. Picking
-  // a level actually starts the game via resetGame(pendingHumanColor).
+  // Difficulty menu: MENU's NEW GAME button leads here. Picking a level
+  // starts a fresh game at that difficulty, keeping whatever color is
+  // currently set (color is a separate, standalone choice -- see above).
   if (inDifficultyMenu) {
     for (int i = 0; i < 4; i++) {
       if (isTouchOnDifficultyButton(i)) {
@@ -606,7 +659,7 @@ void loop() {
           while (touch.touched() && millis() - _waitStart < 2000) { delay(10); }
           aiStrength = i;
           inDifficultyMenu = false;
-          resetGame(pendingHumanColor);
+          resetGame();
         }
         return;
       }

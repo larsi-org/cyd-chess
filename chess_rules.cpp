@@ -35,6 +35,7 @@ void initBoard(GameState &gs) {
   gs.enPassantCol = -1;
   gs.enPassantRow = -1;
   gs.currentPlayer = WHITE_PIECE;
+  gs.halfmoveClock = 0;
 }
 
 
@@ -118,6 +119,7 @@ void addMove(Move *moves,  int &count,  int fr,  int fc,  int tr,  int tc,  Game
   m.fromRow = fr; m.fromCol = fc;
   m.toRow = tr; m.toCol = tc;
   m.promotion = false;
+  m.promoteTo = QUEEN; // default -- see the field's own comment in chess_rules.h
   m.enPassant = enPassant;
   m.castling = castling;
   m.rookFromCol = rookFromCol;
@@ -243,6 +245,11 @@ void generatePseudoMoves(GameState &gs, int player, Move *moves, int &count) {
 void applyMove(GameState &gs, Move &m) {
   int piece = gs.board[m.fromRow][m.fromCol];
   int pieceColor = gs.color[m.fromRow][m.fromCol];
+  // Captured-or-not has to be read *before* the board is mutated below --
+  // en passant's captured pawn never sits on the destination square, so it
+  // needs its own check rather than folding into the "was toRow/toCol
+  // occupied" test.
+  bool isCapture = gs.board[m.toRow][m.toCol] != EMPTY || m.enPassant;
 
   // Handle en passant capture
   if (m.enPassant) {
@@ -265,9 +272,10 @@ void applyMove(GameState &gs, Move &m) {
   gs.board[m.fromRow][m.fromCol] = EMPTY;
   gs.color[m.fromRow][m.fromCol] = 0;
 
-  // Promotion
+  // Promotion -- QUEEN unless the caller chose otherwise (see promoteTo's
+  // own comment in chess_rules.h)
   if (m.promotion) {
-    gs.board[m.toRow][m.toCol] = QUEEN;
+    gs.board[m.toRow][m.toCol] = m.promoteTo;
   }
 
   // Castling: move rook
@@ -293,6 +301,10 @@ void applyMove(GameState &gs, Move &m) {
       if (m.fromCol == 0) gs.blackCastleQ = false;
     }
   }
+
+  // 50-move rule: reset on any pawn move or capture, otherwise count up.
+  if (piece == PAWN || isCapture) gs.halfmoveClock = 0;
+  else gs.halfmoveClock++;
 
   gs.currentPlayer = -gs.currentPlayer;
 }
@@ -331,5 +343,84 @@ bool isStalemate(GameState &gs, int player) {
   int count = 0;
   generateMoves(gs, player, moves, count);
   return (count == 0 && !isInCheck(gs, player));
+}
+
+// ─── Draw detection beyond stalemate ───────────────────────────────────────
+// See chess_rules.h for why positionHistory lives here as a side-table
+// rather than inside GameState.
+uint32_t positionHistory[MAX_POSITION_HISTORY];
+int positionHistoryCount = 0;
+
+void resetPositionHistory() {
+  positionHistoryCount = 0;
+}
+
+// FNV-1a over everything that distinguishes one position from another for
+// repetition purposes (board/color, castling rights, en passant target,
+// side to move) -- not cryptographic, just needs low collision odds across
+// the few hundred positions one game can produce, which 32 bits comfortably
+// covers.
+static uint32_t hashPosition(GameState &gs) {
+  uint32_t h = 2166136261u;
+  for (int r = 0; r < 8; r++) {
+    for (int c = 0; c < 8; c++) {
+      int encoded = gs.board[r][c] * 3;
+      if (gs.color[r][c] == WHITE_PIECE) encoded += 1;
+      else if (gs.color[r][c] == BLACK_PIECE) encoded += 2;
+      h ^= (uint32_t)encoded;
+      h *= 16777619u;
+    }
+  }
+  h ^= (uint32_t)(gs.whiteCastleK | (gs.whiteCastleQ << 1) | (gs.blackCastleK << 2) | (gs.blackCastleQ << 3));
+  h *= 16777619u;
+  h ^= (uint32_t)(gs.enPassantCol + 2) | ((uint32_t)(gs.enPassantRow + 2) << 8);
+  h *= 16777619u;
+  h ^= (uint32_t)(gs.currentPlayer + 2);
+  h *= 16777619u;
+  return h;
+}
+
+void recordPosition(GameState &gs) {
+  if (positionHistoryCount < MAX_POSITION_HISTORY) {
+    positionHistory[positionHistoryCount++] = hashPosition(gs);
+  }
+  // If the cap is ever hit, repetition detection just stops working for the
+  // rest of that (very long) game -- not worth more RAM for that case.
+}
+
+bool isDrawByRepetition(GameState &gs) {
+  uint32_t h = hashPosition(gs);
+  int occurrences = 0;
+  for (int i = 0; i < positionHistoryCount; i++) {
+    if (positionHistory[i] == h) occurrences++;
+  }
+  return occurrences >= 3;
+}
+
+bool isDrawByFiftyMoveRule(GameState &gs) {
+  return gs.halfmoveClock >= 100; // 50 full moves = 100 half-moves
+}
+
+// Deliberately conservative: only the two configurations that can *never*
+// be forced to checkmate (bare kings; king + one lone minor piece vs. bare
+// king), not the fuller theoretical insufficient-material rule -- some
+// two-minor-piece configurations can still force mate in constructed
+// lines, so those are left for the game to actually play out rather than
+// risk a false "draw" on a position that wasn't really dead.
+bool isDrawByInsufficientMaterial(GameState &gs) {
+  int minorCount = 0;
+  for (int r = 0; r < 8; r++) {
+    for (int c = 0; c < 8; c++) {
+      int piece = gs.board[r][c];
+      if (piece == EMPTY || piece == KING) continue;
+      if (piece != BISHOP && piece != KNIGHT) return false; // pawn/rook/queen: always sufficient
+      minorCount++;
+    }
+  }
+  return minorCount <= 1;
+}
+
+bool isDraw(GameState &gs) {
+  return isDrawByRepetition(gs) || isDrawByFiftyMoveRule(gs) || isDrawByInsufficientMaterial(gs);
 }
 

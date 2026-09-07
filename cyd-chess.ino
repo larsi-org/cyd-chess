@@ -105,6 +105,12 @@ const char *STRENGTH_NAMES[4] = {"EASY", "MEDIUM", "HARD", "EXPERT"};
 const int STRENGTH_NODE_BUDGET[4] = {500, 2000, 8000, 30000};
 const int STRENGTH_BLUNDER_PCT[4] = {20, 8, 2, 0};
 
+// Set when the human's tapped move reaches the back rank -- the move
+// itself is held here, promoteTo unset, until the promotion-choice screen
+// picks a piece and completeHumanMove() actually applies it.
+bool awaitingPromotion = false;
+Move pendingPromotionMove;
+
 // True when the human picked Black -- the board is drawn (and touch input
 // read) rotated 180 so the human's own pieces are nearest the bottom,
 // matching how a real board looks from either side of the table. Computed
@@ -356,6 +362,37 @@ bool isTouchOnDifficultyButton(int idx) {
   return isTouchInButton(DIFF_BTN_X, DIFF_BTN_Y(idx), DIFF_BTN_W, DIFF_BTN_H);
 }
 
+// ─── Promotion choice ───────────────────────────────────────────────────────
+// Shown only for the human's own promoting moves -- AI/book moves always
+// auto-queen (see promoteTo's own comment in chess_rules.h; correct almost
+// always, and consistent with how micro-Max evaluates a promoted pawn
+// internally regardless of what this sketch's own board says it became).
+#define PROMO_BTN_W    200
+#define PROMO_BTN_H    45
+#define PROMO_BTN_X    ((240 - PROMO_BTN_W) / 2)
+#define PROMO_BTN_GAP  10
+#define PROMO_BTN_Y0   80
+#define PROMO_BTN_Y(i) (PROMO_BTN_Y0 + (i) * (PROMO_BTN_H + PROMO_BTN_GAP))
+
+const char *PROMO_NAMES[4]  = {"QUEEN", "ROOK", "BISHOP", "KNIGHT"};
+const int PROMO_PIECES[4]  = {QUEEN, ROOK, BISHOP, KNIGHT};
+
+void drawPromotionMenu() {
+  tft.fillScreen(COLOR_BG);
+  tft.setTextSize(2);
+  tft.setTextColor(TFT_YELLOW, COLOR_BG);
+  tft.setCursor(20, 40);
+  tft.print("Promote to:");
+  for (int i = 0; i < 4; i++) {
+    drawTextButton(PROMO_BTN_X, PROMO_BTN_Y(i), PROMO_BTN_W, PROMO_BTN_H,
+                   PROMO_NAMES[i], TFT_NAVY, TFT_CYAN, TFT_WHITE);
+  }
+}
+
+bool isTouchOnPromotionButton(int idx) {
+  return isTouchInButton(PROMO_BTN_X, PROMO_BTN_Y(idx), PROMO_BTN_W, PROMO_BTN_H);
+}
+
 // Changes which color the human plays *without* resetting the game -- supports
 // switching sides mid-game (a teaching technique: "finish what the other
 // person started"). If it's currently the new AI color's turn, the AI just
@@ -364,6 +401,9 @@ bool isTouchOnDifficultyButton(int idx) {
 // starting a new game as Black.
 void switchHumanColor(int newColor) {
   humanColor = newColor;
+  // No coherent "my last move" survives a side-swap -- it may have been
+  // made by a different color's human -- so don't offer to undo across one.
+  invalidateUndoSnapshot();
   pieceSelected = false;
   selectedRow = -1;
   selectedCol = -1;
@@ -381,6 +421,8 @@ void resetGame() {
   microMaxInit();
   mmNodeBudget = STRENGTH_NODE_BUDGET[aiStrength];
   bookReset();
+  resetPositionHistory();
+  recordPosition(gs); // the starting position itself counts as its own first occurrence
   invalidateUndoSnapshot();
   pieceSelected = false;
   selectedRow = -1;
@@ -493,6 +535,8 @@ struct UndoSnapshot {
   int plyCount;
   bool outOfBook;
   BookMove moveHistory[BOOK_MAX_PLY];
+  uint32_t positionHistory[MAX_POSITION_HISTORY];
+  int positionHistoryCount;
 };
 UndoSnapshot undoSnapshot = { false };
 
@@ -502,13 +546,15 @@ void invalidateUndoSnapshot() {
 
 void saveUndoSnapshot(GameState &g) {
   undoSnapshot.valid = true;
-  undoSnapshot.gs = g;
+  undoSnapshot.gs = g; // halfmoveClock rides along inside GameState for free
   memcpy(undoSnapshot.mmB, mmB, sizeof(mmB));
   undoSnapshot.mmJ = mmJ; undoSnapshot.mmZ = mmZ; undoSnapshot.mmk = mmk;
   undoSnapshot.mmR = mmR; undoSnapshot.mmQ = mmQ; undoSnapshot.mmO = mmO;
   undoSnapshot.plyCount = plyCount;
   undoSnapshot.outOfBook = outOfBook;
   memcpy(undoSnapshot.moveHistory, moveHistory, sizeof(moveHistory));
+  memcpy(undoSnapshot.positionHistory, positionHistory, sizeof(positionHistory));
+  undoSnapshot.positionHistoryCount = positionHistoryCount;
 }
 
 // Returns false (and leaves everything untouched) if nothing's been saved
@@ -522,6 +568,8 @@ bool restoreUndoSnapshot(GameState &g) {
   plyCount = undoSnapshot.plyCount;
   outOfBook = undoSnapshot.outOfBook;
   memcpy(moveHistory, undoSnapshot.moveHistory, sizeof(moveHistory));
+  memcpy(positionHistory, undoSnapshot.positionHistory, sizeof(positionHistory));
+  positionHistoryCount = undoSnapshot.positionHistoryCount;
   undoSnapshot.valid = false; // one level only -- used up until the next move
   return true;
 }
@@ -560,6 +608,45 @@ void getTouchSquare(int &row, int &col) {
   }
 }
 
+// Finishes applying a human move already confirmed legal -- and, for a
+// promotion, already resolved to a specific piece via the promotion-choice
+// screen. Shared by the ordinary (non-promotion) move-completion path and
+// the promotion-choice resume path in loop(), so the save-undo/apply/sync/
+// redraw/game-end-check sequence lives in exactly one place.
+void completeHumanMove(Move &m) {
+  saveUndoSnapshot(gs); // captures the position as it stood right before this move
+  applyMove(gs, m);
+  recordPosition(gs);
+  microMaxApplyMove(m.fromRow, m.fromCol, m.toRow, m.toCol);
+  bookRecordMove(m.fromRow, m.fromCol, m.toRow, m.toCol);
+
+  drawBoard(gs);
+
+  if (isCheckmate(gs, -humanColor)) {
+    drawStatus("Checkmate! You win!");
+    drawGameOver("You Win!");
+    gameOver = true;
+    return;
+  }
+  if (isStalemate(gs, -humanColor)) {
+    drawStatus("Stalemate!");
+    drawGameOver("Stalemate!");
+    gameOver = true;
+    return;
+  }
+  if (isDraw(gs)) {
+    drawStatus("Draw!");
+    drawGameOver("Draw!");
+    gameOver = true;
+    return;
+  }
+  if (isInCheck(gs, -humanColor)) {
+    drawStatus("Check! AI thinking...");
+  } else {
+    drawStatus("AI thinking...");
+  }
+}
+
 // ─── Setup & Loop ──────────────────────────────────────────────────────────
 void setup() {
   Serial.begin(115200);
@@ -583,6 +670,8 @@ void setup() {
   microMaxInit();
   mmNodeBudget = STRENGTH_NODE_BUDGET[aiStrength];
   bookReset();
+  resetPositionHistory();
+  recordPosition(gs); // the starting position itself counts as its own first occurrence
   invalidateUndoSnapshot();
 
   tft.fillScreen(COLOR_BG);
@@ -659,6 +748,31 @@ void loop() {
           aiStrength = i;
           inDifficultyMenu = false;
           resetGame();
+        }
+        return;
+      }
+    }
+    return;
+  }
+
+  // Promotion choice: the human's pawn move is already picked (stored in
+  // pendingPromotionMove) and waiting on which piece to become -- nothing
+  // else runs until this is resolved, same "modal" treatment as the menus
+  // above.
+  if (awaitingPromotion) {
+    for (int i = 0; i < 4; i++) {
+      if (isTouchOnPromotionButton(i)) {
+        delay(50); // debounce
+        if (isTouchOnPromotionButton(i)) {
+          unsigned long _waitStart = millis();
+          while (touch.touched() && millis() - _waitStart < 2000) { delay(10); }
+          pendingPromotionMove.promoteTo = PROMO_PIECES[i];
+          awaitingPromotion = false;
+          completeHumanMove(pendingPromotionMove);
+          // The promotion screen did a full fillScreen(), unlike an
+          // ordinary move -- redraw the buttons it wiped.
+          drawMenuButton();
+          drawUndoButton();
         }
         return;
       }
@@ -793,14 +907,17 @@ void loop() {
 
       // Try to make a move
       bool moveMade = false;
+      bool needsPromotionChoice = false;
       for (int i = 0; i < legalMoveCount; i++) {
         if (legalMoves[i].toRow == tRow && legalMoves[i].toCol == tCol) {
-          saveUndoSnapshot(gs); // captures the position as it stood right before this move
-          applyMove(gs, legalMoves[i]);
-          microMaxApplyMove(legalMoves[i].fromRow, legalMoves[i].fromCol,
-                            legalMoves[i].toRow, legalMoves[i].toCol);
-          bookRecordMove(legalMoves[i].fromRow, legalMoves[i].fromCol,
-                          legalMoves[i].toRow, legalMoves[i].toCol);
+          if (legalMoves[i].promotion) {
+            // Defer -- completeHumanMove() runs once the promotion-choice
+            // screen below picks a piece, not immediately.
+            pendingPromotionMove = legalMoves[i];
+            needsPromotionChoice = true;
+          } else {
+            completeHumanMove(legalMoves[i]);
+          }
           moveMade = true;
           break;
         }
@@ -819,27 +936,11 @@ void loop() {
         return;
       }
 
-      // Check game end conditions after player move
-      drawBoard(gs);
-
-      if (isCheckmate(gs, -humanColor)) {
-        drawStatus("Checkmate! You win!");
-        drawGameOver("You Win!");
-        gameOver = true;
+      if (needsPromotionChoice) {
+        awaitingPromotion = true;
+        drawPromotionMenu();
         return;
       }
-      if (isStalemate(gs, -humanColor)) {
-        drawStatus("Stalemate!");
-        drawGameOver("Stalemate!");
-        gameOver = true;
-        return;
-      }
-      if (isInCheck(gs, -humanColor)) {
-        drawStatus("Check! AI thinking...");
-      } else {
-        drawStatus("AI thinking...");
-      }
-
     }
   } else {
     // AI's turn
@@ -918,6 +1019,7 @@ void loop() {
     bookRecordMove(best.fromRow, best.fromCol, best.toRow, best.toCol);
 
     applyMove(gs, best);
+    recordPosition(gs);
 
     drawBoard(gs);
 
@@ -941,6 +1043,12 @@ void loop() {
     if (isStalemate(gs, humanColor)) {
       drawStatus("Stalemate!");
       drawGameOver("Stalemate!");
+      gameOver = true;
+      return;
+    }
+    if (isDraw(gs)) {
+      drawStatus("Draw!");
+      drawGameOver("Draw!");
       gameOver = true;
       return;
     }

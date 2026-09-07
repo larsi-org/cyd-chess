@@ -1,8 +1,9 @@
 // Chess game for ESP32-2432S028R with ILI9341 TFT display
-// Player (White) vs AI (Black) -- rules/board/move generation (chess_rules.h/
-// .cpp), H.G. Muller's micro-Max engine (micromax.h/.cpp), a small opening
-// book (book.h/.cpp), and piece graphics (pieces.h) all split into their own
-// files; this .ino is display/touch/setup/loop -- the UI wrapped around them
+// Player (White or Black, chosen from the MENU) vs AI -- rules/board/move
+// generation (chess_rules.h/.cpp), H.G. Muller's micro-Max engine
+// (micromax.h/.cpp), a small opening book (book.h/.cpp), and piece graphics
+// (pieces.h) all split into their own files; this .ino is display/touch/
+// setup/loop -- the UI wrapped around them
 // Touch screen for piece selection and movement, one-level undo
 
 #include <SPI.h>
@@ -85,6 +86,17 @@ bool pieceSelected = false;
 Move legalMoves[256];
 int legalMoveCount = 0;
 bool gameOver = false;
+int humanColor = WHITE_PIECE; // which side the player is -- MENU picks this
+bool inMenu = false;          // showing the color-choice menu, board hidden
+
+// True when the human picked Black -- the board is drawn (and touch input
+// read) rotated 180 so the human's own pieces are nearest the bottom,
+// matching how a real board looks from either side of the table. Computed
+// fresh from humanColor rather than cached, so there's no separate flag to
+// keep in sync.
+bool boardFlipped() {
+  return humanColor == BLACK_PIECE;
+}
 
 // Touch calibration values (may need tuning)
 #define TOUCH_X_MIN 200
@@ -99,6 +111,19 @@ void drawStatus(const char *msg) {
   tft.setTextSize(1);
   tft.setCursor(4, 4);
   tft.print(msg);
+}
+
+// Collapses every "Your turn (White)"/"Your turn (Black)"/"AI thinking..."
+// site into one place -- correct regardless of which color is human since
+// it re-checks gs.currentPlayer/humanColor fresh each call.
+void showTurnStatus() {
+  if (gs.currentPlayer == humanColor) {
+    char buf[32];
+    snprintf(buf, sizeof(buf), "Your turn (%s)", humanColor == WHITE_PIECE ? "White" : "Black");
+    drawStatus(buf);
+  } else {
+    drawStatus("AI thinking...");
+  }
 }
 
 void drawGameOver(const char *msg) {
@@ -123,9 +148,22 @@ void drawPieceBitmap(int x, int y, const uint8_t *bitmap, uint16_t color) {
   }
 }
 
+// Top-left pixel of board square (row,col), accounting for boardFlipped() --
+// the one place the 180-degree rotation for a Black-playing human actually
+// happens. Everything else (selection state, move generation, the rules
+// layer) stays entirely in board coordinates; only pixel placement rotates.
+void boardToScreenXY(int row, int col, int &x, int &y) {
+  int screenRow = boardFlipped() ? 7 - row : row;
+  int screenCol = boardFlipped() ? 7 - col : col;
+  x = BOARD_OFFSET_X + screenCol * SQUARE_SIZE;
+  y = BOARD_OFFSET_Y + screenRow * SQUARE_SIZE;
+}
+
 void drawPiece(int row, int col, int piece, int pieceColor) {
-  int x = BOARD_OFFSET_X + col * SQUARE_SIZE + (SQUARE_SIZE - PIECE_SIZE) / 2;
-  int y = BOARD_OFFSET_Y + row * SQUARE_SIZE + (SQUARE_SIZE - PIECE_SIZE) / 2;
+  int x, y;
+  boardToScreenXY(row, col, x, y);
+  x += (SQUARE_SIZE - PIECE_SIZE) / 2;
+  y += (SQUARE_SIZE - PIECE_SIZE) / 2;
 
   int idx = piece - 1; // PAWN=1..KING=6 -> 0..5
   if (idx < 0 || idx > 5) return;
@@ -138,13 +176,15 @@ void drawPiece(int row, int col, int piece, int pieceColor) {
 }
 
 void drawSquare(int row, int col, bool highlight, bool moveDot, GameState &gs) {
-  int x = BOARD_OFFSET_X + col * SQUARE_SIZE;
-  int y = BOARD_OFFSET_Y + row * SQUARE_SIZE;
+  int x, y;
+  boardToScreenXY(row, col, x, y);
   uint16_t bg;
 
   if (highlight) {
     bg = COLOR_SELECTED;
   } else {
+    // Unflipped (row+col) on purpose -- a real board's square colors don't
+    // change when you walk around the table, only your view of them does.
     bg = ((row + col) % 2 == 0) ? COLOR_LIGHT_SQ : COLOR_DARK_SQ;
   }
 
@@ -174,21 +214,23 @@ void drawSquare(int row, int col, bool highlight, bool moveDot, GameState &gs) {
 #define BTN_H          24
 
 void drawTextButton(int x, int y, int w, int h, const char *label, int labelLen,
-                     uint16_t fillColor, uint16_t borderColor) {
+                     uint16_t fillColor, uint16_t borderColor, uint16_t textColor = TFT_WHITE) {
   tft.fillRoundRect(x, y, w, h, 4, fillColor);
   tft.drawRoundRect(x, y, w, h, 4, borderColor);
   tft.setTextSize(1);
-  tft.setTextColor(TFT_WHITE, fillColor);
+  tft.setTextColor(textColor, fillColor);
   // Centred-ish text — TFT_eSPI default font is ~6 pixels per character.
   tft.setCursor(x + (w - labelLen * 6) / 2, y + (h - 8) / 2);
   tft.print(label);
 }
 
-void drawNewGameButton() {
-  drawTextButton(NEW_GAME_BTN_X, BTN_Y, BTN_W, BTN_H, "NEW GAME", 8, TFT_DARKGREEN, TFT_GREEN);
+// Was "NEW GAME" -- now opens the color-choice menu instead of resetting
+// directly, same button slot/color.
+void drawMenuButton() {
+  drawTextButton(NEW_GAME_BTN_X, BTN_Y, BTN_W, BTN_H, "MENU", 4, TFT_DARKGREEN, TFT_GREEN);
 }
 
-// Amber rather than New Game's green, so the two are easy to tell apart at
+// Amber rather than Menu's green, so the two are easy to tell apart at
 // a glance -- a common "undo" color and distinct from "start over".
 void drawUndoButton() {
   drawTextButton(UNDO_BTN_X, BTN_Y, BTN_W, BTN_H, "UNDO", 4, 0x8400 /* dark amber */, TFT_ORANGE);
@@ -202,7 +244,7 @@ bool isTouchInButton(int x, int y, int w, int h) {
   return (tx >= x && tx < x + w && ty >= y && ty < y + h);
 }
 
-bool isTouchOnNewGameButton() {
+bool isTouchOnMenuButton() {
   return isTouchInButton(NEW_GAME_BTN_X, BTN_Y, BTN_W, BTN_H);
 }
 
@@ -210,7 +252,37 @@ bool isTouchOnUndoButton() {
   return isTouchInButton(UNDO_BTN_X, BTN_Y, BTN_W, BTN_H);
 }
 
-void resetGame() {
+// ─── Menu screen ────────────────────────────────────────────────────────────
+// Covers the whole screen (board/buttons hidden) while inMenu is true --
+// currently offers one real choice: which color the human plays.
+#define MENU_BTN_W      200
+#define MENU_BTN_H      60
+#define MENU_BTN_X      ((240 - MENU_BTN_W) / 2)
+#define MENU_WHITE_BTN_Y 120
+#define MENU_BLACK_BTN_Y 200
+
+void drawMenuScreen() {
+  tft.fillScreen(COLOR_BG);
+  tft.setTextSize(2);
+  tft.setTextColor(TFT_YELLOW, COLOR_BG);
+  tft.setCursor(48, 60);
+  tft.print("New Game");
+  drawTextButton(MENU_BTN_X, MENU_WHITE_BTN_Y, MENU_BTN_W, MENU_BTN_H,
+                 "NEW GAME WHITE", 15, COLOR_WHITE_P, TFT_BLACK, TFT_BLACK);
+  drawTextButton(MENU_BTN_X, MENU_BLACK_BTN_Y, MENU_BTN_W, MENU_BTN_H,
+                 "NEW GAME BLACK", 15, COLOR_BLACK_P, TFT_WHITE, TFT_WHITE);
+}
+
+bool isTouchOnNewGameWhiteButton() {
+  return isTouchInButton(MENU_BTN_X, MENU_WHITE_BTN_Y, MENU_BTN_W, MENU_BTN_H);
+}
+
+bool isTouchOnNewGameBlackButton() {
+  return isTouchInButton(MENU_BTN_X, MENU_BLACK_BTN_Y, MENU_BTN_W, MENU_BTN_H);
+}
+
+void resetGame(int newHumanColor) {
+  humanColor = newHumanColor;
   initBoard(gs);
   microMaxInit();
   bookReset();
@@ -222,9 +294,9 @@ void resetGame() {
   gameOver = false;
   tft.fillScreen(COLOR_BG);
   drawBoard(gs);
-  drawNewGameButton();
+  drawMenuButton();
   drawUndoButton();
-  drawStatus("Your turn (White)");
+  showTurnStatus();
 }
 
 void drawBoard(GameState &gs) {
@@ -249,16 +321,20 @@ void drawBoard(GameState &gs) {
     }
   }
 
-  // Draw coordinates
+  // Draw coordinates -- i is a *screen* position (0-7, left-to-right /
+  // top-to-bottom); the board file/rank actually shown there depends on
+  // boardFlipped(), same transform as boardToScreenXY() but run in reverse.
   tft.setTextSize(1);
   tft.setTextColor(TFT_YELLOW, COLOR_BG);
-  for (int c = 0; c < 8; c++) {
-    tft.setCursor(BOARD_OFFSET_X + c * SQUARE_SIZE + 12, BOARD_OFFSET_Y + 8 * SQUARE_SIZE + 2);
-    tft.print((char)('a' + c));
+  for (int i = 0; i < 8; i++) {
+    int boardCol = boardFlipped() ? 7 - i : i;
+    tft.setCursor(BOARD_OFFSET_X + i * SQUARE_SIZE + 12, BOARD_OFFSET_Y + 8 * SQUARE_SIZE + 2);
+    tft.print((char)('a' + boardCol));
   }
-  for (int r = 0; r < 8; r++) {
-    tft.setCursor(BOARD_OFFSET_X + 8 * SQUARE_SIZE + 2, BOARD_OFFSET_Y + r * SQUARE_SIZE + 10);
-    tft.print(8 - r);
+  for (int i = 0; i < 8; i++) {
+    int boardRow = boardFlipped() ? 7 - i : i;
+    tft.setCursor(BOARD_OFFSET_X + 8 * SQUARE_SIZE + 2, BOARD_OFFSET_Y + i * SQUARE_SIZE + 10);
+    tft.print(8 - boardRow);
   }
 }
 
@@ -380,6 +456,13 @@ void getTouchSquare(int &row, int &col) {
 
   col = bx / SQUARE_SIZE;
   row = by / SQUARE_SIZE;
+
+  // Self-inverse: the same flip used to place squares/pieces on screen
+  // undoes itself here to recover the underlying board coordinate.
+  if (boardFlipped()) {
+    row = 7 - row;
+    col = 7 - col;
+  }
 }
 
 // ─── Setup & Loop ──────────────────────────────────────────────────────────
@@ -408,9 +491,9 @@ void setup() {
 
   tft.fillScreen(COLOR_BG);
   drawBoard(gs);
-  drawNewGameButton();
+  drawMenuButton();
   drawUndoButton();
-  drawStatus("Your turn (White)");
+  showTurnStatus();
 
   // Diagnostic: how much loopTask stack is left at the end of setup()?
   // Reports the minimum free stack (high-water mark). If this is small,
@@ -428,21 +511,48 @@ void loop() {
   // (yield() does NOT fix this — it only schedules equal-or-higher priority.)
   delay(1);
 
-  // New Game button: works in any game state (mid-game, game over, AI's
-  // turn). Check before all other touch handling so a tap on the button
-  // always wins. Wait for finger release with the same 2s timeout used
-  // elsewhere so a stuck touch sensor can't freeze the reset.
-  if (isTouchOnNewGameButton()) {
+  // Color-choice menu: covers the whole screen, so it's checked before (and
+  // instead of) the Menu/Undo buttons below, which aren't visible right now.
+  if (inMenu) {
+    if (isTouchOnNewGameWhiteButton()) {
+      delay(50); // debounce
+      if (isTouchOnNewGameWhiteButton()) {
+        unsigned long _waitStart = millis();
+        while (touch.touched() && millis() - _waitStart < 2000) { delay(10); }
+        inMenu = false;
+        resetGame(WHITE_PIECE);
+      }
+      return;
+    }
+    if (isTouchOnNewGameBlackButton()) {
+      delay(50); // debounce
+      if (isTouchOnNewGameBlackButton()) {
+        unsigned long _waitStart = millis();
+        while (touch.touched() && millis() - _waitStart < 2000) { delay(10); }
+        inMenu = false;
+        resetGame(BLACK_PIECE);
+      }
+      return;
+    }
+    return;
+  }
+
+  // Menu button: works in any game state (mid-game, game over, AI's turn).
+  // Check before all other touch handling so a tap on the button always
+  // wins. Wait for finger release with the same 2s timeout used elsewhere
+  // so a stuck touch sensor can't freeze the transition.
+  if (isTouchOnMenuButton()) {
     delay(50); // debounce
-    if (isTouchOnNewGameButton()) {
+    if (isTouchOnMenuButton()) {
       unsigned long _waitStart = millis();
       while (touch.touched() && millis() - _waitStart < 2000) { delay(10); }
-      resetGame();
+      inMenu = true;
+      drawMenuScreen();
       return;
     }
   }
 
-  // Undo button: same "works in any game state" treatment as New Game,
+  // Undo button: same "works in any game state" treatment as Menu,
   // including backing out of a just-delivered checkmate/stalemate so a
   // blunder doesn't have to end the game. Single level only -- restoring
   // the snapshot consumes it, so a second tap with nothing left to undo
@@ -459,11 +569,12 @@ void loop() {
         selectedCol = -1;
         legalMoveCount = 0;
         drawBoard(gs);
-        drawStatus("Your turn (White)");
+        showTurnStatus();
       } else {
         drawStatus("Nothing to undo!");
         delay(800);
-        drawStatus(gameOver ? "Game over" : "Your turn (White)");
+        if (gameOver) drawStatus("Game over");
+        else showTurnStatus();
       }
       return;
     }
@@ -490,14 +601,14 @@ void loop() {
       invalidateUndoSnapshot();
       tft.fillScreen(COLOR_BG);
       drawBoard(gs);
-      drawNewGameButton();
+      drawMenuButton();
       drawUndoButton();
-      drawStatus("Your turn (White)");
+      showTurnStatus();
     }
     return;
   }
 
-  if (gs.currentPlayer == WHITE_PIECE) {
+  if (gs.currentPlayer == humanColor) {
     // Human's turn
     if (!touch.touched()) return;
 
@@ -527,14 +638,14 @@ void loop() {
 
     if (!pieceSelected) {
       // Select a piece
-      if (gs.board[tRow][tCol] != EMPTY && gs.color[tRow][tCol] == WHITE_PIECE) {
+      if (gs.board[tRow][tCol] != EMPTY && gs.color[tRow][tCol] == humanColor) {
         selectedRow = tRow;
         selectedCol = tCol;
         pieceSelected = true;
         // Generate legal moves for this piece
         Move allMoves[256];
         int allCount = 0;
-        generateMoves(gs, WHITE_PIECE, allMoves, allCount);
+        generateMoves(gs, humanColor, allMoves, allCount);
         legalMoveCount = 0;
         for (int i = 0; i < allCount; i++) {
           if (allMoves[i].fromRow == selectedRow && allMoves[i].fromCol == selectedCol) {
@@ -552,17 +663,17 @@ void loop() {
         selectedCol = -1;
         legalMoveCount = 0;
         redrawSelectionChange(gs, oldSelRow, oldSelCol, oldDotSquare);
-        drawStatus("Your turn (White)");
+        showTurnStatus();
         return;
       }
 
-      // Re-select another white piece
-      if (gs.board[tRow][tCol] != EMPTY && gs.color[tRow][tCol] == WHITE_PIECE) {
+      // Re-select another of the human's own pieces
+      if (gs.board[tRow][tCol] != EMPTY && gs.color[tRow][tCol] == humanColor) {
         selectedRow = tRow;
         selectedCol = tCol;
         Move allMoves[256];
         int allCount = 0;
-        generateMoves(gs, WHITE_PIECE, allMoves, allCount);
+        generateMoves(gs, humanColor, allMoves, allCount);
         legalMoveCount = 0;
         for (int i = 0; i < allCount; i++) {
           if (allMoves[i].fromRow == selectedRow && allMoves[i].fromCol == selectedCol) {
@@ -598,26 +709,26 @@ void loop() {
         redrawSelectionChange(gs, oldSelRow, oldSelCol, oldDotSquare);
         drawStatus("Invalid move!");
         delay(800);
-        drawStatus("Your turn (White)");
+        showTurnStatus();
         return;
       }
 
       // Check game end conditions after player move
       drawBoard(gs);
 
-      if (isCheckmate(gs, BLACK_PIECE)) {
+      if (isCheckmate(gs, -humanColor)) {
         drawStatus("Checkmate! You win!");
         drawGameOver("You Win!");
         gameOver = true;
         return;
       }
-      if (isStalemate(gs, BLACK_PIECE)) {
+      if (isStalemate(gs, -humanColor)) {
         drawStatus("Stalemate!");
         drawGameOver("Stalemate!");
         gameOver = true;
         return;
       }
-      if (isInCheck(gs, BLACK_PIECE)) {
+      if (isInCheck(gs, -humanColor)) {
         drawStatus("Check! AI thinking...");
       } else {
         drawStatus("AI thinking...");
@@ -625,12 +736,12 @@ void loop() {
 
     }
   } else {
-    // AI's turn (Black)
+    // AI's turn
     delay(100);
 
     Move allMoves[256];
     int allCount = 0;
-    generateMoves(gs, BLACK_PIECE, allMoves, allCount);
+    generateMoves(gs, -humanColor, allMoves, allCount);
 
     // Trust the book/micro-Max only as far as this sketch's own legal-move
     // list confirms -- match the chosen from/to squares against a move this
@@ -699,22 +810,22 @@ void loop() {
       delay(1500);
     }
 
-    if (isCheckmate(gs, WHITE_PIECE)) {
+    if (isCheckmate(gs, humanColor)) {
       drawStatus("Checkmate! AI wins!");
       drawGameOver("AI Wins!");
       gameOver = true;
       return;
     }
-    if (isStalemate(gs, WHITE_PIECE)) {
+    if (isStalemate(gs, humanColor)) {
       drawStatus("Stalemate!");
       drawGameOver("Stalemate!");
       gameOver = true;
       return;
     }
-    if (isInCheck(gs, WHITE_PIECE)) {
+    if (isInCheck(gs, humanColor)) {
       drawStatus("You're in Check!");
     } else {
-      drawStatus("Your turn (White)");
+      showTurnStatus();
     }
   }
 }

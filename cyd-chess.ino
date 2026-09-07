@@ -70,6 +70,8 @@ void drawGameOver(const char *msg);
 void drawPiece(int row, int col, int piece, int pieceColor);
 void drawSquare(int row, int col, bool highlight, bool moveDot, GameState &gs);
 void drawBoard(GameState &gs);
+void redrawSquare(GameState &gs, int r, int c);
+void redrawSelectionChange(GameState &gs, int oldSelRow, int oldSelCol, bool oldDotSquare[8][8]);
 bool inBounds(int r, int c);
 bool squareAttacked(GameState &gs, int row, int col, int byPlayer);
 bool isInCheck(GameState &gs, int player);
@@ -130,6 +132,8 @@ XPT2046_Touchscreen touch(TOUCH_CS_PIN, TOUCH_IRQ_PIN);
 // ─── Forward Declarations ──────────────────────────────────────────────────
 void initBoard(GameState &gs);
 void drawBoard(GameState &gs);
+void redrawSquare(GameState &gs, int r, int c);
+void redrawSelectionChange(GameState &gs, int oldSelRow, int oldSelCol, bool oldDotSquare[8][8]);
 void drawSquare(int row, int col, bool highlight, bool moveDot, GameState &gs);
 void drawPiece(int row, int col, int piece, int pieceColor);
 bool isValidMove(GameState &gs, Move &m);
@@ -399,7 +403,9 @@ void resetGame() {
 }
 
 void drawBoard(GameState &gs) {
-  tft.fillRect(BOARD_OFFSET_X, BOARD_OFFSET_Y, 8 * SQUARE_SIZE, 8 * SQUARE_SIZE, COLOR_LIGHT_SQ);
+  // No whole-board clear here -- every square below gets its own fillRect
+  // in drawSquare() regardless, so a prior full-board fill only added an
+  // extra flash of solid color before every single redraw.
 
   // Determine if any square is selected and build move dots
   bool dotSquare[8][8];
@@ -429,6 +435,44 @@ void drawBoard(GameState &gs) {
     tft.setCursor(BOARD_OFFSET_X + 8 * SQUARE_SIZE + 2, BOARD_OFFSET_Y + r * SQUARE_SIZE + 10);
     tft.print(8 - r);
   }
+}
+
+// Redraws a single square using the *current* global selection state
+// (pieceSelected/selectedRow/selectedCol/legalMoves) -- the same
+// highlight/move-dot logic drawBoard() computes per-square, just for one
+// square instead of all 64.
+void redrawSquare(GameState &gs, int r, int c) {
+  bool highlight = (pieceSelected && r == selectedRow && c == selectedCol);
+  bool moveDot = false;
+  for (int i = 0; i < legalMoveCount; i++) {
+    if (legalMoves[i].toRow == r && legalMoves[i].toCol == c) { moveDot = true; break; }
+  }
+  drawSquare(r, c, highlight, moveDot, gs);
+}
+
+// Redraws only the squares whose highlight/move-dot state can actually have
+// changed from a pure selection change (select/deselect/re-select/invalid-
+// move-cleared) -- none of these change gs.board itself, so repainting all
+// 64 squares (drawBoard()'s job, needed when a move is actually applied) is
+// needless work that shows up as a visible flicker on every tap, including
+// on squares whose piece never changed. Takes the selection state from
+// *before* the change since that's already been overwritten by the time
+// this is called; the *current* globals supply the "after" state.
+void redrawSelectionChange(GameState &gs, int oldSelRow, int oldSelCol, bool oldDotSquare[8][8]) {
+  bool touched[8][8];
+  memset(touched, false, sizeof(touched));
+
+  if (oldSelRow >= 0) touched[oldSelRow][oldSelCol] = true;
+  for (int r = 0; r < 8; r++)
+    for (int c = 0; c < 8; c++)
+      if (oldDotSquare[r][c]) touched[r][c] = true;
+
+  if (pieceSelected) touched[selectedRow][selectedCol] = true;
+  for (int i = 0; i < legalMoveCount; i++) touched[legalMoves[i].toRow][legalMoves[i].toCol] = true;
+
+  for (int r = 0; r < 8; r++)
+    for (int c = 0; c < 8; c++)
+      if (touched[r][c]) redrawSquare(gs, r, c);
 }
 
 // ─── Move Validation Helpers ───────────────────────────────────────────────
@@ -1235,6 +1279,18 @@ void loop() {
 
     if (tRow < 0 || tRow >= 8 || tCol < 0 || tCol >= 8) return;
 
+    // Snapshot the selection-display state before any of the branches below
+    // mutate it, so a pure selection change (select/deselect/re-select/
+    // invalid-move-cleared -- none of which touch gs.board) can redraw just
+    // the squares that actually changed instead of repainting all 64 the
+    // way an applied move's full drawBoard() below still needs to.
+    int oldSelRow = selectedRow, oldSelCol = selectedCol;
+    bool oldDotSquare[8][8];
+    memset(oldDotSquare, false, sizeof(oldDotSquare));
+    for (int i = 0; i < legalMoveCount; i++) {
+      oldDotSquare[legalMoves[i].toRow][legalMoves[i].toCol] = true;
+    }
+
     if (!pieceSelected) {
       // Select a piece
       if (gs.board[tRow][tCol] != EMPTY && gs.color[tRow][tCol] == WHITE_PIECE) {
@@ -1251,7 +1307,7 @@ void loop() {
             legalMoves[legalMoveCount++] = allMoves[i];
           }
         }
-        drawBoard(gs);
+        redrawSelectionChange(gs, oldSelRow, oldSelCol, oldDotSquare);
         drawStatus("Select destination");
       }
     } else {
@@ -1261,7 +1317,7 @@ void loop() {
         selectedRow = -1;
         selectedCol = -1;
         legalMoveCount = 0;
-        drawBoard(gs);
+        redrawSelectionChange(gs, oldSelRow, oldSelCol, oldDotSquare);
         drawStatus("Your turn (White)");
         return;
       }
@@ -1279,7 +1335,7 @@ void loop() {
             legalMoves[legalMoveCount++] = allMoves[i];
           }
         }
-        drawBoard(gs);
+        redrawSelectionChange(gs, oldSelRow, oldSelCol, oldDotSquare);
         drawStatus("Select destination");
         return;
       }
@@ -1304,7 +1360,7 @@ void loop() {
       legalMoveCount = 0;
 
       if (!moveMade) {
-        drawBoard(gs);
+        redrawSelectionChange(gs, oldSelRow, oldSelCol, oldDotSquare);
         drawStatus("Invalid move!");
         delay(800);
         drawStatus("Your turn (White)");

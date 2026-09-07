@@ -1,6 +1,8 @@
 // Chess game for ESP32-2432S028R with ILI9341 TFT display
-// Player (White) vs AI (Black) using minimax with alpha-beta pruning
-// Touch screen for piece selection and movement
+// Player (White) vs AI (Black) -- H.G. Muller's micro-Max engine plus a
+// small opening book (see the "micro-Max chess engine" / "Opening Book"
+// sections below)
+// Touch screen for piece selection and movement, one-level undo
 
 #include <SPI.h>
 
@@ -88,6 +90,8 @@ void microMaxGetBestMove(int &fromRow, int &fromCol, int &toRow, int &toCol);
 void bookReset();
 void bookRecordMove(int fromRow, int fromCol, int toRow, int toCol);
 bool bookGetMove(int &fromRow, int &fromCol, int &toRow, int &toCol);
+void invalidateUndoSnapshot();
+void drawUndoButton();
 void getTouchSquare(int &row, int &col);
 
 TFT_eSPI tft = TFT_eSPI();
@@ -149,6 +153,8 @@ void microMaxGetBestMove(int &fromRow, int &fromCol, int &toRow, int &toCol);
 void bookReset();
 void bookRecordMove(int fromRow, int fromCol, int toRow, int toCol);
 bool bookGetMove(int &fromRow, int &fromCol, int &toRow, int &toCol);
+void invalidateUndoSnapshot();
+void drawUndoButton();
 void getTouchSquare(int &row, int &col);
 void drawStatus(const char *msg);
 void drawGameOver(const char *msg);
@@ -360,37 +366,58 @@ void drawSquare(int row, int col, bool highlight, bool moveDot, GameState &gs) {
   }
 }
 
-// New Game button — bottom of screen, below the chess board.
+// Undo / New Game buttons — bottom of screen, below the chess board.
 // 240×320 portrait: board occupies y=40..280; column labels at y=282..290;
-// button gets the remaining strip y=294..318.
-#define NEW_GAME_BTN_X      60
-#define NEW_GAME_BTN_Y     294
-#define NEW_GAME_BTN_W     120
-#define NEW_GAME_BTN_H      24
+// buttons get the remaining strip y=294..318, split into two side by side
+// (5px margins, 10px gap: 5+110+10+110+5 = 240).
+#define UNDO_BTN_X     5
+#define NEW_GAME_BTN_X 125
+#define BTN_Y          294
+#define BTN_W          110
+#define BTN_H          24
 
-void drawNewGameButton() {
-  tft.fillRoundRect(NEW_GAME_BTN_X, NEW_GAME_BTN_Y, NEW_GAME_BTN_W, NEW_GAME_BTN_H, 4, TFT_DARKGREEN);
-  tft.drawRoundRect(NEW_GAME_BTN_X, NEW_GAME_BTN_Y, NEW_GAME_BTN_W, NEW_GAME_BTN_H, 4, TFT_GREEN);
+void drawTextButton(int x, int y, int w, int h, const char *label, int labelLen,
+                     uint16_t fillColor, uint16_t borderColor) {
+  tft.fillRoundRect(x, y, w, h, 4, fillColor);
+  tft.drawRoundRect(x, y, w, h, 4, borderColor);
   tft.setTextSize(1);
-  tft.setTextColor(TFT_WHITE, TFT_DARKGREEN);
+  tft.setTextColor(TFT_WHITE, fillColor);
   // Centred-ish text — TFT_eSPI default font is ~6 pixels per character.
-  tft.setCursor(NEW_GAME_BTN_X + (NEW_GAME_BTN_W - 8 * 6) / 2, NEW_GAME_BTN_Y + (NEW_GAME_BTN_H - 8) / 2);
-  tft.print("NEW GAME");
+  tft.setCursor(x + (w - labelLen * 6) / 2, y + (h - 8) / 2);
+  tft.print(label);
 }
 
-bool isTouchOnNewGameButton() {
+void drawNewGameButton() {
+  drawTextButton(NEW_GAME_BTN_X, BTN_Y, BTN_W, BTN_H, "NEW GAME", 8, TFT_DARKGREEN, TFT_GREEN);
+}
+
+// Amber rather than New Game's green, so the two are easy to tell apart at
+// a glance -- a common "undo" color and distinct from "start over".
+void drawUndoButton() {
+  drawTextButton(UNDO_BTN_X, BTN_Y, BTN_W, BTN_H, "UNDO", 4, 0x8400 /* dark amber */, TFT_ORANGE);
+}
+
+bool isTouchInButton(int x, int y, int w, int h) {
   if (!touch.touched()) return false;
   TS_Point p = touch.getPoint();
   int tx = map(p.x, TOUCH_X_MIN, TOUCH_X_MAX, 0, 240);
   int ty = map(p.y, TOUCH_Y_MIN, TOUCH_Y_MAX, 0, 320);
-  return (tx >= NEW_GAME_BTN_X && tx < NEW_GAME_BTN_X + NEW_GAME_BTN_W &&
-          ty >= NEW_GAME_BTN_Y && ty < NEW_GAME_BTN_Y + NEW_GAME_BTN_H);
+  return (tx >= x && tx < x + w && ty >= y && ty < y + h);
+}
+
+bool isTouchOnNewGameButton() {
+  return isTouchInButton(NEW_GAME_BTN_X, BTN_Y, BTN_W, BTN_H);
+}
+
+bool isTouchOnUndoButton() {
+  return isTouchInButton(UNDO_BTN_X, BTN_Y, BTN_W, BTN_H);
 }
 
 void resetGame() {
   initBoard(gs);
   microMaxInit();
   bookReset();
+  invalidateUndoSnapshot();
   pieceSelected = false;
   selectedRow = -1;
   selectedCol = -1;
@@ -399,6 +426,7 @@ void resetGame() {
   tft.fillScreen(COLOR_BG);
   drawBoard(gs);
   drawNewGameButton();
+  drawUndoButton();
   drawStatus("Your turn (White)");
 }
 
@@ -876,10 +904,10 @@ bool isStalemate(GameState &gs, int player) {
 // (the budget only gates whether the root *starts* another deepening pass,
 // not recursive descents already underway) -- so 1e6 nodes cost ~172
 // *seconds* for a cold-hash-table move, unusable for an interactive game.
-// 30000 targets roughly 5s for a cold (never-searched) position; later
-// moves in a game are usually much faster once the hash table has relevant
-// entries warmed from earlier search. Tune this directly if 5s feels too
-// slow/fast once played for real.
+// 30000 targets roughly 5s per move (every move -- see the mmN reset in
+// microMaxGetBestMove() below for why this budget actually applies fresh
+// each move rather than only the first). Tune this directly if 5s feels
+// too slow/fast once played for real.
 #define MM_NODE_BUDGET 30000
 struct _ { int K, V; char X, Y, D; } mmA[MM_U];
 
@@ -1029,6 +1057,17 @@ void microMaxApplyMove(int fromRow, int fromCol, int toRow, int toCol) {
 // to its own board. Caller is expected to cross-check this against its own
 // legal-move list before trusting it (this sketch's loop() does).
 void microMaxGetBestMove(int &fromRow, int &fromCol, int &toRow, int &toCol) {
+ // [cyd-chess fix] mmN (the root deepening loop's node counter, checked
+ // against MM_NODE_BUDGET) is never reset by Muller's own code -- it only
+ // resets once per NEW GAME, in microMaxInit(). Left alone, the first move
+ // of a game exhausts the whole budget and every later move's root call
+ // starts already over budget, so its "keep deepening" check fails
+ // immediately and it silently falls back to the bare depth-3 search with
+ // no time-based extension at all -- for the rest of that game. (This is
+ // what actually made moves 2+ fast in the ~4s/cold-move measurement
+ // documented above; earlier attribution of that to hash-table warming was
+ // wrong.) Reset here so every move gets the real search budget.
+ mmN = 0;
  mmK = mmI;
  mmD(-mmI, mmI, mmQ, mmO, 1, 3);
  fromRow = mmLastX / 16; fromCol = mmLastX & 7;
@@ -1153,6 +1192,61 @@ bool bookGetMove(int &fromRow, int &fromCol, int &toRow, int &toCol) {
   return true;
 }
 
+// ─── Undo (single-level) ───────────────────────────────────────────────────
+// One saved snapshot, taken right before the human's move is applied --
+// restoring it always reverts to "right before my last move", which also
+// erases whatever the AI replied with in between (there's no sensible way
+// to undo only the AI's reply and leave the human's own move in place, and
+// a kid using this to take back a blunder wants the whole exchange gone
+// anyway). No stack, no redo -- exactly one level, by design, per Lars.
+//
+// Three separate pieces of state have to travel together or the AI and this
+// sketch's own board desync: this sketch's own GameState, micro-Max's own
+// board/running state (it never sees an undo otherwise -- it would still
+// think the undone moves happened), and the opening book's move history
+// (same reason -- otherwise it could offer a book move that no longer
+// matches what's actually on the board).
+struct UndoSnapshot {
+  bool valid;
+  GameState gs;
+  signed char mmB[129];
+  int mmJ, mmZ, mmk, mmR, mmQ, mmO;
+  int plyCount;
+  bool outOfBook;
+  BookMove moveHistory[BOOK_MAX_PLY];
+};
+UndoSnapshot undoSnapshot = { false };
+
+void invalidateUndoSnapshot() {
+  undoSnapshot.valid = false;
+}
+
+void saveUndoSnapshot(GameState &g) {
+  undoSnapshot.valid = true;
+  undoSnapshot.gs = g;
+  memcpy(undoSnapshot.mmB, mmB, sizeof(mmB));
+  undoSnapshot.mmJ = mmJ; undoSnapshot.mmZ = mmZ; undoSnapshot.mmk = mmk;
+  undoSnapshot.mmR = mmR; undoSnapshot.mmQ = mmQ; undoSnapshot.mmO = mmO;
+  undoSnapshot.plyCount = plyCount;
+  undoSnapshot.outOfBook = outOfBook;
+  memcpy(undoSnapshot.moveHistory, moveHistory, sizeof(moveHistory));
+}
+
+// Returns false (and leaves everything untouched) if nothing's been saved
+// yet this game -- caller just shows "Nothing to undo" rather than acting.
+bool restoreUndoSnapshot(GameState &g) {
+  if (!undoSnapshot.valid) return false;
+  g = undoSnapshot.gs;
+  memcpy(mmB, undoSnapshot.mmB, sizeof(mmB));
+  mmJ = undoSnapshot.mmJ; mmZ = undoSnapshot.mmZ; mmk = undoSnapshot.mmk;
+  mmR = undoSnapshot.mmR; mmQ = undoSnapshot.mmQ; mmO = undoSnapshot.mmO;
+  plyCount = undoSnapshot.plyCount;
+  outOfBook = undoSnapshot.outOfBook;
+  memcpy(moveHistory, undoSnapshot.moveHistory, sizeof(moveHistory));
+  undoSnapshot.valid = false; // one level only -- used up until the next move
+  return true;
+}
+
 // ─── Touch Input ───────────────────────────────────────────────────────────
 void getTouchSquare(int &row, int &col) {
   row = -1; col = -1;
@@ -1202,10 +1296,12 @@ void setup() {
   initBoard(gs);
   microMaxInit();
   bookReset();
+  invalidateUndoSnapshot();
 
   tft.fillScreen(COLOR_BG);
   drawBoard(gs);
   drawNewGameButton();
+  drawUndoButton();
   drawStatus("Your turn (White)");
 
   // Diagnostic: how much loopTask stack is left at the end of setup()?
@@ -1238,6 +1334,33 @@ void loop() {
     }
   }
 
+  // Undo button: same "works in any game state" treatment as New Game,
+  // including backing out of a just-delivered checkmate/stalemate so a
+  // blunder doesn't have to end the game. Single level only -- restoring
+  // the snapshot consumes it, so a second tap with nothing left to undo
+  // just reports that rather than doing anything.
+  if (isTouchOnUndoButton()) {
+    delay(50); // debounce
+    if (isTouchOnUndoButton()) {
+      unsigned long _waitStart = millis();
+      while (touch.touched() && millis() - _waitStart < 2000) { delay(10); }
+      if (restoreUndoSnapshot(gs)) {
+        gameOver = false;
+        pieceSelected = false;
+        selectedRow = -1;
+        selectedCol = -1;
+        legalMoveCount = 0;
+        drawBoard(gs);
+        drawStatus("Your turn (White)");
+      } else {
+        drawStatus("Nothing to undo!");
+        delay(800);
+        drawStatus(gameOver ? "Game over" : "Your turn (White)");
+      }
+      return;
+    }
+  }
+
   if (gameOver) {
     // Wait for touch to restart
     if (touch.touched()) {
@@ -1256,8 +1379,11 @@ void loop() {
       initBoard(gs);
       microMaxInit();
       bookReset();
+      invalidateUndoSnapshot();
       tft.fillScreen(COLOR_BG);
       drawBoard(gs);
+      drawNewGameButton();
+      drawUndoButton();
       drawStatus("Your turn (White)");
     }
     return;
@@ -1344,6 +1470,7 @@ void loop() {
       bool moveMade = false;
       for (int i = 0; i < legalMoveCount; i++) {
         if (legalMoves[i].toRow == tRow && legalMoves[i].toCol == tCol) {
+          saveUndoSnapshot(gs); // captures the position as it stood right before this move
           applyMove(gs, legalMoves[i]);
           microMaxApplyMove(legalMoves[i].fromRow, legalMoves[i].fromCol,
                             legalMoves[i].toRow, legalMoves[i].toCol);

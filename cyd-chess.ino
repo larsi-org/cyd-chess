@@ -154,8 +154,8 @@ void drawGameOver(const char *msg) {
   tft.setCursor(30, 115);
   tft.print(msg);
   tft.setTextSize(1);
-  tft.setCursor(50, 140);
-  tft.print("Tap to restart");
+  tft.setCursor(44, 140);
+  tft.print("Tap MENU to play again");
 }
 
 void drawPieceBitmap(int x, int y, const uint8_t *bitmap, uint16_t color) {
@@ -710,33 +710,10 @@ void loop() {
     }
   }
 
-  if (gameOver) {
-    // Wait for touch to restart
-    if (touch.touched()) {
-      delay(300);
-      // Wait for release — bail after 2s in case the sensor glitches and
-      // never reports !touched(). Without the timeout, a stuck touch event
-      // would freeze the game (loop() would never return, so we'd stop
-      // processing input even though the WDT stays fed by delay(10)).
-      unsigned long _waitStart = millis();
-      while (touch.touched() && millis() - _waitStart < 2000) { delay(10); }
-      gameOver = false;
-      pieceSelected = false;
-      selectedRow = -1;
-      selectedCol = -1;
-      legalMoveCount = 0;
-      initBoard(gs);
-      microMaxInit();
-      bookReset();
-      invalidateUndoSnapshot();
-      tft.fillScreen(COLOR_BG);
-      drawBoard(gs);
-      drawMenuButton();
-      drawUndoButton();
-      showTurnStatus();
-    }
-    return;
-  }
+  // No tap-anywhere-to-restart -- MENU (checked above, still works here) is
+  // the one way to start again, with color/difficulty chosen deliberately
+  // rather than an accidental board tap wiping out a finished game.
+  if (gameOver) return;
 
   if (gs.currentPlayer == humanColor) {
     // Human's turn

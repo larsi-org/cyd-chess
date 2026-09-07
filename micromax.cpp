@@ -203,6 +203,17 @@ C:if(m>mmI-mmM|m<mmM-mmI)d=98;                       /* mate holds to any depth 
 
 void microMaxInit() {
  memset(mmA, 0, sizeof(mmA));      // [cyd-chess addition] clear hash between games
+ // [cyd-chess addition] Muller's own setup loop below only ever explicitly
+ // writes the back ranks/pawn ranks (rows 0,1,6,7) -- it relies on the rest
+ // of the board (rows 2-5, where pieces actually move to and from during
+ // play) already being zeroed process-wide memory, true only the *first*
+ // time this runs in a process. Every later call in the same process (this
+ // sketch calls microMaxInit() again on every New Game/MENU/restart, never
+ // rebooting) would otherwise leave whatever pieces the *previous* game
+ // moved into the middle of the board still sitting there, corrupting the
+ // very next game's move search. Found via a multi-game-per-process
+ // off-device test; confirmed absent when each game ran in its own process.
+ memset(mmB, 0, sizeof(mmB));
  mmK=8;W(mmK--)
  {mmB[mmK]=(mmB[mmK+112]=mmOv[mmK+24]+8)+8;mmB[mmK+16]=18;mmB[mmK+96]=9;  /* initial board setup*/
   mmL=8;W(mmL--)mmB[16*mmL+mmK+8]=(mmK-4)*(mmK-4)+(mmL-3.5)*(mmL-3.5); /* center-pts table   */

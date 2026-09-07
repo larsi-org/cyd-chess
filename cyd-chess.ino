@@ -1251,6 +1251,7 @@ void loop() {
     // than needing to trust either source's board state directly.
     Move best = allMoves[0]; // emergency fallback if no match is ever found
     bool found = false;
+    bool aiFallbackUsed = false; // surfaced on-screen below, not just to Serial
 
     int bkFromRow, bkFromCol, bkToRow, bkToCol;
     bool fromBook = bookGetMove(bkFromRow, bkFromCol, bkToRow, bkToCol);
@@ -1269,6 +1270,7 @@ void loop() {
         // moves, or the two engines desync from here on.
         microMaxApplyMove(best.fromRow, best.fromCol, best.toRow, best.toCol);
       } else {
+        aiFallbackUsed = true;
         Serial.printf("[book] chose (%d,%d)->(%d,%d), not in this sketch's own legal moves -- falling back to micro-Max\n",
                       bkFromRow, bkFromCol, bkToRow, bkToCol);
       }
@@ -1286,6 +1288,7 @@ void loop() {
         }
       }
       if (!found) {
+        aiFallbackUsed = true;
         Serial.printf("[micro-Max] chose (%d,%d)->(%d,%d), not in this sketch's own legal moves -- falling back\n",
                       mmFromRow, mmFromCol, mmToRow, mmToCol);
       }
@@ -1296,6 +1299,17 @@ void loop() {
     applyMove(gs, best);
 
     drawBoard(gs);
+
+    // Should never actually trigger -- both the book and micro-Max have been
+    // tested extensively (200-move self-play, 2000-trial book sampling, all
+    // clean) -- but if a proposed move ever *doesn't* match this sketch's own
+    // legal-move list, the emergency move[0] fallback above still played
+    // something, and that's worth surfacing on-screen, not just to Serial,
+    // since nobody's watching a serial monitor during normal play.
+    if (aiFallbackUsed) {
+      drawStatus("Engine glitch - played fallback move");
+      delay(1500);
+    }
 
     if (isCheckmate(gs, WHITE_PIECE)) {
       drawStatus("Checkmate! AI wins!");

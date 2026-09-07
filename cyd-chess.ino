@@ -13,9 +13,7 @@
 // Move*/GameState& fail to compile.
 struct Move {
   int fromRow, fromCol, toRow, toCol;
-  int capturedPiece, capturedColor;
   bool promotion;
-  int promotedFrom;
   bool enPassant;
   bool castling;
   // castling rook info
@@ -82,7 +80,6 @@ bool isInCheck(GameState &gs, int player);
 void addMove(Move *moves, int &count, int fr, int fc, int tr, int tc, GameState &gs, bool enPassant = false, bool castling = false, int rookFromCol = -1, int rookToCol = -1);
 void generatePseudoMoves(GameState &gs, int player, Move *moves, int &count);
 void applyMove(GameState &gs, Move &m);
-void undoMove(GameState &gs, Move &m);
 void generateMoves(GameState &gs, int player, Move *moves, int &count);
 bool isCheckmate(GameState &gs, int player);
 bool isStalemate(GameState &gs, int player);
@@ -98,7 +95,6 @@ SPIClass touchSPI(VSPI);
 XPT2046_Touchscreen touch(TOUCH_CS_PIN, TOUCH_IRQ_PIN);
 
 // ─── Chess Constants ───────────────────────────────────────────────────────
-#define BOARD_SIZE    8
 #define SQUARE_SIZE   30
 #define BOARD_OFFSET_X 0
 #define BOARD_OFFSET_Y 40
@@ -127,36 +123,6 @@ XPT2046_Touchscreen touch(TOUCH_CS_PIN, TOUCH_IRQ_PIN);
 #define COLOR_TEXT      0xFFFF
 #define COLOR_STATUS_BG 0x2104
 
-// ─── Game State Structs ────────────────────────────────────────────────────
-
-
-
-
-// ─── Forward Declarations ──────────────────────────────────────────────────
-void initBoard(GameState &gs);
-void drawBoard(GameState &gs);
-void redrawSquare(GameState &gs, int r, int c);
-void redrawSelectionChange(GameState &gs, int oldSelRow, int oldSelCol, bool oldDotSquare[8][8]);
-void drawSquare(int row, int col, bool highlight, bool moveDot, GameState &gs);
-void drawPiece(int row, int col, int piece, int pieceColor);
-bool isValidMove(GameState &gs, Move &m);
-void generateMoves(GameState &gs, int player, Move *moves, int &count);
-void applyMove(GameState &gs, Move &m);
-void undoMove(GameState &gs, Move &m);
-bool isInCheck(GameState &gs, int player);
-bool isCheckmate(GameState &gs, int player);
-bool isStalemate(GameState &gs, int player);
-void microMaxInit();
-void microMaxApplyMove(int fromRow, int fromCol, int toRow, int toCol);
-void microMaxGetBestMove(int &fromRow, int &fromCol, int &toRow, int &toCol);
-void invalidateUndoSnapshot();
-void drawUndoButton();
-void getTouchSquare(int &row, int &col);
-void drawStatus(const char *msg);
-void drawGameOver(const char *msg);
-bool squareAttacked(GameState &gs, int row, int col, int byPlayer);
-void handlePromotion(GameState &gs, int row, int col, int pieceColor);
-
 // ─── Globals ───────────────────────────────────────────────────────────────
 GameState gs;
 int selectedRow = -1;
@@ -165,7 +131,6 @@ bool pieceSelected = false;
 Move legalMoves[256];
 int legalMoveCount = 0;
 bool gameOver = false;
-char statusMsg[64] = "Your turn (White)";
 
 // Touch calibration values (may need tuning)
 #define TOUCH_X_MIN 200
@@ -492,10 +457,7 @@ void addMove(Move *moves,  int &count,  int fr,  int fc,  int tr,  int tc,  Game
   Move m;
   m.fromRow = fr; m.fromCol = fc;
   m.toRow = tr; m.toCol = tc;
-  m.capturedPiece = gs.board[tr][tc];
-  m.capturedColor = gs.color[tr][tc];
   m.promotion = false;
-  m.promotedFrom = gs.board[fr][fc];
   m.enPassant = enPassant;
   m.castling = castling;
   m.rookFromCol = rookFromCol;
@@ -675,52 +637,18 @@ void applyMove(GameState &gs, Move &m) {
   gs.currentPlayer = -gs.currentPlayer;
 }
 
-void undoMove(GameState &gs, Move &m) {
-  int piece = gs.board[m.toRow][m.toCol];
-  int pieceColor = gs.color[m.toRow][m.toCol];
-
-  // Undo promotion
-  if (m.promotion) {
-    piece = PAWN;
-  }
-
-  gs.board[m.fromRow][m.fromCol] = piece;
-  gs.color[m.fromRow][m.fromCol] = pieceColor;
-  gs.board[m.toRow][m.toCol] = m.capturedPiece;
-  gs.color[m.toRow][m.toCol] = m.capturedColor;
-
-  // Undo en passant
-  if (m.enPassant) {
-    int captureRow = m.fromRow;
-    int captureColor = -pieceColor;
-    gs.board[captureRow][m.toCol] = PAWN;
-    gs.color[captureRow][m.toCol] = captureColor;
-  }
-
-  // Undo castling: move rook back
-  if (m.castling) {
-    int backRow = m.fromRow;
-    gs.board[backRow][m.rookFromCol] = ROOK;
-    gs.color[backRow][m.rookFromCol] = pieceColor;
-    gs.board[backRow][m.rookToCol] = EMPTY;
-    gs.color[backRow][m.rookToCol] = 0;
-  }
-
-  gs.currentPlayer = -gs.currentPlayer;
-}
-
 void generateMoves(GameState &gs, int player, Move *moves, int &count) {
   count = 0;
   Move pseudoMoves[256];
   int pseudoCount = 0;
   generatePseudoMoves(gs, player, pseudoMoves, pseudoCount);
 
-  // Snapshot/restore the full GameState rather than relying on undoMove —
-  // undoMove only restores board[][] / color[][], leaving enPassant target,
-  // castling rights, and currentPlayer corrupted. With those leaking across
-  // pseudoMove iterations, the AI sees positions that can't actually arise
-  // and emits illegal moves (e.g. rook capturing its own pawn). Full copy
-  // costs ~520 bytes per iteration but eliminates the whole class of bugs.
+  // Snapshot/restore the full GameState rather than a partial move-undo —
+  // restoring just board[][]/color[][] after a pseudo-move leaves enPassant
+  // target, castling rights, and currentPlayer corrupted. With those leaking
+  // across pseudoMove iterations, the AI sees positions that can't actually
+  // arise and emits illegal moves (e.g. rook capturing its own pawn). Full
+  // copy costs ~520 bytes per iteration but eliminates the whole class of bugs.
   for (int i = 0; i < pseudoCount; i++) {
     GameState saved = gs;
     applyMove(gs, pseudoMoves[i]);

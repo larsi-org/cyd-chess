@@ -16,4 +16,10 @@ void microMaxGetBestMove(int &fromRow, int &fromCol, int &toRow, int &toCol);
 extern signed char mmB[129];
 extern int mmJ, mmZ, mmk, mmR, mmQ, mmO;
 
+// How many search nodes the root deepening loop budgets per move (see the
+// comment on its definition in micromax.cpp) -- exposed so the .ino's
+// difficulty selector can set it before a game starts. Not per-move running
+// state like the globals above: microMaxInit() deliberately leaves it alone.
+extern int mmNodeBudget;
+
 #endif // CYD_CHESS_MICROMAX_H

@@ -36,9 +36,11 @@
 //    MM_U below, to fit ESP32 RAM. A smaller table only means more hash
 //    collisions (weaker move-ordering hints), never incorrect play.
 //  - Root search node budget (the literal `N<1e6` in the deepening-loop
-//    condition) replaced with MM_NODE_BUDGET, sized for this hardware's
+//    condition) replaced with mmNodeBudget, sized for this hardware's
 //    measured node rate rather than Muller's original PC target -- see
-//    that macro's own comment for the measurement and reasoning.
+//    that variable's own comment for the measurement and reasoning. Made a
+//    runtime variable (not a compile-time constant) rather than a macro, so
+//    cyd-chess.ino's difficulty selector can set it per game.
 //  - char forced explicitly `signed char` throughout this block -- see
 //    that declaration's own comment.
 //  - mmT[] (the hash translation table, reinterpreted 4 bytes at a time via
@@ -72,11 +74,14 @@
 // (the budget only gates whether the root *starts* another deepening pass,
 // not recursive descents already underway) -- so 1e6 nodes cost ~172
 // *seconds* for a cold-hash-table move, unusable for an interactive game.
-// 30000 targets roughly 5s per move (every move -- see the mmN reset in
+// 30000 (the Expert-level default -- see cyd-chess.ino's STRENGTH_NODE_BUDGET)
+// targets roughly 5s per move (every move -- see the mmN reset in
 // microMaxGetBestMove() below for why this budget actually applies fresh
-// each move rather than only the first). Tune this directly if 5s feels
-// too slow/fast once played for real.
-#define MM_NODE_BUDGET 30000
+// each move rather than only the first). A runtime variable rather than a
+// compile-time constant so the difficulty selector can lower it for a
+// weaker/faster-playing AI; microMaxInit() deliberately does not reset it,
+// since it's per-game configuration set by the caller, not running state.
+int mmNodeBudget = 30000;
 struct _ { int K, V; char X, Y, D; } mmA[MM_U];
 
 int mmM = 136, mmS = 128, mmI = 8e3, mmQ, mmO, mmK, mmN, mmR, mmJ, mmZ, mmk = 16;
@@ -125,7 +130,7 @@ int mmD(int q, int l, int e, int E, int z, int n)  /* recursive minimax search, 
  X&=~mmM;                                        /* start at best-move hint  */
 
  W(d++<n||d<3||                                /* iterative deepening loop */
-   z&mmK==mmI&&(mmN<MM_NODE_BUDGET&d<98||             /* root: deepen upto time   */
+   z&mmK==mmI&&(mmN<mmNodeBudget&d<98||             /* root: deepen upto time   */
    (mmK=X,mmL=Y&~mmM,d=3)))                              /* time's up: go do best    */
  {x=B=X;                                       /* start scan at prev. best */
   h=Y&mmS;                                       /* request try noncastl. 1st*/

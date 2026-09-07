@@ -89,6 +89,23 @@ bool gameOver = false;
 int humanColor = WHITE_PIECE; // which side the player is -- MENU picks this
 bool inMenu = false;          // showing the color-choice menu, board hidden
 
+// MENU's second screen -- difficulty. Default Expert (index 3) so a fresh
+// boot, before anyone's touched the menu, plays exactly like this sketch did
+// before this feature existed.
+int aiStrength = 3; // 0=Easy 1=Medium 2=Hard 3=Expert
+bool inDifficultyMenu = false;
+int pendingHumanColor; // color picked on screen 1, held until screen 2 picks a level
+
+const char *STRENGTH_NAMES[4] = {"EASY", "MEDIUM", "HARD", "EXPERT"};
+// Node budget: see mmNodeBudget's own comment in micromax.cpp -- lower means
+// a shallower/faster (weaker) search, same knob that already controls the
+// ~5s-per-move Expert default. Blunder %: once out of book, the chance per
+// AI move that a uniformly random legal move gets played instead of the
+// engine's actual choice (see the AI-turn branch in loop()) -- 0 at Expert
+// means it plays exactly as before this feature existed.
+const int STRENGTH_NODE_BUDGET[4] = {500, 2000, 8000, 30000};
+const int STRENGTH_BLUNDER_PCT[4] = {20, 8, 2, 0};
+
 // True when the human picked Black -- the board is drawn (and touch input
 // read) rotated 180 so the human's own pieces are nearest the bottom,
 // matching how a real board looks from either side of the table. Computed
@@ -281,10 +298,44 @@ bool isTouchOnNewGameBlackButton() {
   return isTouchInButton(MENU_BTN_X, MENU_BLACK_BTN_Y, MENU_BTN_W, MENU_BTN_H);
 }
 
+// ─── Difficulty screen (MENU's second step) ────────────────────────────────
+// Shown right after color choice, before resetGame() actually starts the
+// game -- see pendingHumanColor above.
+#define DIFF_BTN_W    200
+#define DIFF_BTN_H    45
+#define DIFF_BTN_X    ((240 - DIFF_BTN_W) / 2)
+#define DIFF_BTN_GAP  10
+#define DIFF_BTN_Y0   90
+#define DIFF_BTN_Y(i) (DIFF_BTN_Y0 + (i) * (DIFF_BTN_H + DIFF_BTN_GAP))
+
+void drawDifficultyMenu() {
+  tft.fillScreen(COLOR_BG);
+  tft.setTextSize(2);
+  tft.setTextColor(TFT_YELLOW, COLOR_BG);
+  tft.setCursor(28, 50);
+  tft.print("Difficulty");
+
+  // Light-to-dark progression (green..red), text color kept readable on each.
+  uint16_t fill[4]    = {TFT_GREEN, TFT_YELLOW, TFT_ORANGE, TFT_RED};
+  uint16_t border[4]  = {TFT_BLACK, TFT_BLACK,  TFT_BLACK,  TFT_WHITE};
+  uint16_t textCol[4] = {TFT_BLACK, TFT_BLACK,  TFT_BLACK,  TFT_WHITE};
+  int labelLen[4]     = {4, 6, 4, 6}; // strlen(STRENGTH_NAMES[i])
+
+  for (int i = 0; i < 4; i++) {
+    drawTextButton(DIFF_BTN_X, DIFF_BTN_Y(i), DIFF_BTN_W, DIFF_BTN_H,
+                   STRENGTH_NAMES[i], labelLen[i], fill[i], border[i], textCol[i]);
+  }
+}
+
+bool isTouchOnDifficultyButton(int idx) {
+  return isTouchInButton(DIFF_BTN_X, DIFF_BTN_Y(idx), DIFF_BTN_W, DIFF_BTN_H);
+}
+
 void resetGame(int newHumanColor) {
   humanColor = newHumanColor;
   initBoard(gs);
   microMaxInit();
+  mmNodeBudget = STRENGTH_NODE_BUDGET[aiStrength];
   bookReset();
   invalidateUndoSnapshot();
   pieceSelected = false;
@@ -486,6 +537,7 @@ void setup() {
   // Init game
   initBoard(gs);
   microMaxInit();
+  mmNodeBudget = STRENGTH_NODE_BUDGET[aiStrength];
   bookReset();
   invalidateUndoSnapshot();
 
@@ -513,14 +565,18 @@ void loop() {
 
   // Color-choice menu: covers the whole screen, so it's checked before (and
   // instead of) the Menu/Undo buttons below, which aren't visible right now.
+  // Picking a color doesn't start the game yet -- it moves on to the
+  // difficulty screen below.
   if (inMenu) {
     if (isTouchOnNewGameWhiteButton()) {
       delay(50); // debounce
       if (isTouchOnNewGameWhiteButton()) {
         unsigned long _waitStart = millis();
         while (touch.touched() && millis() - _waitStart < 2000) { delay(10); }
+        pendingHumanColor = WHITE_PIECE;
         inMenu = false;
-        resetGame(WHITE_PIECE);
+        inDifficultyMenu = true;
+        drawDifficultyMenu();
       }
       return;
     }
@@ -529,10 +585,31 @@ void loop() {
       if (isTouchOnNewGameBlackButton()) {
         unsigned long _waitStart = millis();
         while (touch.touched() && millis() - _waitStart < 2000) { delay(10); }
+        pendingHumanColor = BLACK_PIECE;
         inMenu = false;
-        resetGame(BLACK_PIECE);
+        inDifficultyMenu = true;
+        drawDifficultyMenu();
       }
       return;
+    }
+    return;
+  }
+
+  // Difficulty menu: MENU's second screen, shown after color choice. Picking
+  // a level actually starts the game via resetGame(pendingHumanColor).
+  if (inDifficultyMenu) {
+    for (int i = 0; i < 4; i++) {
+      if (isTouchOnDifficultyButton(i)) {
+        delay(50); // debounce
+        if (isTouchOnDifficultyButton(i)) {
+          unsigned long _waitStart = millis();
+          while (touch.touched() && millis() - _waitStart < 2000) { delay(10); }
+          aiStrength = i;
+          inDifficultyMenu = false;
+          resetGame(pendingHumanColor);
+        }
+        return;
+      }
     }
     return;
   }
@@ -776,20 +853,36 @@ void loop() {
     }
 
     if (!found) {
-      int mmFromRow, mmFromCol, mmToRow, mmToCol;
-      microMaxGetBestMove(mmFromRow, mmFromCol, mmToRow, mmToCol);
-      for (int i = 0; i < allCount; i++) {
-        if (allMoves[i].fromRow == mmFromRow && allMoves[i].fromCol == mmFromCol &&
-            allMoves[i].toRow == mmToRow && allMoves[i].toCol == mmToCol) {
-          best = allMoves[i];
-          found = true;
-          break;
+      // Difficulty: below Expert, occasionally play a random legal move
+      // instead of running the real search -- decided *before* calling
+      // microMaxGetBestMove(), since that call commits its chosen move
+      // into micro-Max's own board as a side effect of finding it, so
+      // there's no cheap way to override its choice afterward. Skipping
+      // the search entirely when blundering avoids ever needing to.
+      bool blunder = allCount > 1 && STRENGTH_BLUNDER_PCT[aiStrength] > 0 &&
+                     (int)(esp_random() % 100) < STRENGTH_BLUNDER_PCT[aiStrength];
+      if (blunder) {
+        best = allMoves[esp_random() % allCount];
+        found = true;
+        // Same generic "sync this externally-chosen move into micro-Max's
+        // board" call the book path above already uses.
+        microMaxApplyMove(best.fromRow, best.fromCol, best.toRow, best.toCol);
+      } else {
+        int mmFromRow, mmFromCol, mmToRow, mmToCol;
+        microMaxGetBestMove(mmFromRow, mmFromCol, mmToRow, mmToCol);
+        for (int i = 0; i < allCount; i++) {
+          if (allMoves[i].fromRow == mmFromRow && allMoves[i].fromCol == mmFromCol &&
+              allMoves[i].toRow == mmToRow && allMoves[i].toCol == mmToCol) {
+            best = allMoves[i];
+            found = true;
+            break;
+          }
         }
-      }
-      if (!found) {
-        aiFallbackUsed = true;
-        Serial.printf("[micro-Max] chose (%d,%d)->(%d,%d), not in this sketch's own legal moves -- falling back\n",
-                      mmFromRow, mmFromCol, mmToRow, mmToCol);
+        if (!found) {
+          aiFallbackUsed = true;
+          Serial.printf("[micro-Max] chose (%d,%d)->(%d,%d), not in this sketch's own legal moves -- falling back\n",
+                        mmFromRow, mmFromCol, mmToRow, mmToCol);
+        }
       }
     }
 

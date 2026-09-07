@@ -224,37 +224,37 @@ void drawSquare(int row, int col, bool highlight, bool moveDot, GameState &gs) {
   }
 }
 
-// Undo / New Game buttons — bottom of screen, below the chess board.
+// Undo / Menu buttons — bottom of screen, below the chess board.
 // 240×320 portrait: board occupies y=40..280; column labels at y=282..290;
 // buttons get the remaining strip y=294..318, split into two side by side
 // (5px margins, 10px gap: 5+110+10+110+5 = 240).
-#define UNDO_BTN_X     5
-#define NEW_GAME_BTN_X 125
-#define BTN_Y          294
-#define BTN_W          110
-#define BTN_H          24
+#define UNDO_BTN_X       5
+#define MENU_BOTTOM_BTN_X 125
+#define BTN_Y            294
+#define BTN_W            110
+#define BTN_H            24
 
-void drawTextButton(int x, int y, int w, int h, const char *label, int labelLen,
+void drawTextButton(int x, int y, int w, int h, const char *label,
                      uint16_t fillColor, uint16_t borderColor, uint16_t textColor = TFT_WHITE) {
   tft.fillRoundRect(x, y, w, h, 4, fillColor);
   tft.drawRoundRect(x, y, w, h, 4, borderColor);
   tft.setTextSize(1);
   tft.setTextColor(textColor, fillColor);
   // Centred-ish text — TFT_eSPI default font is ~6 pixels per character.
-  tft.setCursor(x + (w - labelLen * 6) / 2, y + (h - 8) / 2);
+  tft.setCursor(x + (w - (int)strlen(label) * 6) / 2, y + (h - 8) / 2);
   tft.print(label);
 }
 
 // Was "NEW GAME" -- now opens the color-choice menu instead of resetting
 // directly, same button slot/color.
 void drawMenuButton() {
-  drawTextButton(NEW_GAME_BTN_X, BTN_Y, BTN_W, BTN_H, "MENU", 4, TFT_DARKGREEN, TFT_GREEN);
+  drawTextButton(MENU_BOTTOM_BTN_X, BTN_Y, BTN_W, BTN_H, "MENU", TFT_DARKGREEN, TFT_GREEN);
 }
 
 // Amber rather than Menu's green, so the two are easy to tell apart at
 // a glance -- a common "undo" color and distinct from "start over".
 void drawUndoButton() {
-  drawTextButton(UNDO_BTN_X, BTN_Y, BTN_W, BTN_H, "UNDO", 4, 0x8400 /* dark amber */, TFT_ORANGE);
+  drawTextButton(UNDO_BTN_X, BTN_Y, BTN_W, BTN_H, "UNDO", 0x8400 /* dark amber */, TFT_ORANGE);
 }
 
 bool isTouchInButton(int x, int y, int w, int h) {
@@ -266,7 +266,7 @@ bool isTouchInButton(int x, int y, int w, int h) {
 }
 
 bool isTouchOnMenuButton() {
-  return isTouchInButton(NEW_GAME_BTN_X, BTN_Y, BTN_W, BTN_H);
+  return isTouchInButton(MENU_BOTTOM_BTN_X, BTN_Y, BTN_W, BTN_H);
 }
 
 bool isTouchOnUndoButton() {
@@ -304,11 +304,11 @@ void drawMenuScreen() {
   tft.print(caption);
 
   drawTextButton(MENU_BTN_X, MENU_NEWGAME_BTN_Y, MENU_BTN_W, MENU_BTN_H,
-                 "NEW GAME", 8, TFT_DARKGREEN, TFT_GREEN);
+                 "NEW GAME", TFT_DARKGREEN, TFT_GREEN);
   drawTextButton(MENU_BTN_X, MENU_WHITE_BTN_Y, MENU_BTN_W, MENU_BTN_H,
-                 "PLAY WHITE", 10, COLOR_WHITE_P, TFT_BLACK, TFT_BLACK);
+                 "PLAY WHITE", COLOR_WHITE_P, TFT_BLACK, TFT_BLACK);
   drawTextButton(MENU_BTN_X, MENU_BLACK_BTN_Y, MENU_BTN_W, MENU_BTN_H,
-                 "PLAY BLACK", 10, COLOR_BLACK_P, TFT_WHITE, TFT_WHITE);
+                 "PLAY BLACK", COLOR_BLACK_P, TFT_WHITE, TFT_WHITE);
 }
 
 bool isTouchOnMenuNewGameButton() {
@@ -345,11 +345,10 @@ void drawDifficultyMenu() {
   uint16_t fill[4]    = {TFT_GREEN, TFT_YELLOW, TFT_ORANGE, TFT_RED};
   uint16_t border[4]  = {TFT_BLACK, TFT_BLACK,  TFT_BLACK,  TFT_WHITE};
   uint16_t textCol[4] = {TFT_BLACK, TFT_BLACK,  TFT_BLACK,  TFT_WHITE};
-  int labelLen[4]     = {4, 6, 4, 6}; // strlen(STRENGTH_NAMES[i])
 
   for (int i = 0; i < 4; i++) {
     drawTextButton(DIFF_BTN_X, DIFF_BTN_Y(i), DIFF_BTN_W, DIFF_BTN_H,
-                   STRENGTH_NAMES[i], labelLen[i], fill[i], border[i], textCol[i]);
+                   STRENGTH_NAMES[i], fill[i], border[i], textCol[i]);
   }
 }
 

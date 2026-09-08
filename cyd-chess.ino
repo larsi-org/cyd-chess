@@ -25,6 +25,7 @@
 #include "pieces.h"
 #include "book.h"
 #include "micromax.h"
+#include "persistence.h"
 
 // Override loopTask stack size to 64KB. arduino-esp32 v2.0.17 declares
 // `size_t getArduinoLoopTaskStackSize(void);` with C++ linkage in Arduino.h
@@ -428,6 +429,11 @@ void switchHumanColor(int newColor) {
   drawUndoButton();
   if (gameOver) drawGameOver(lastGameOverMsg);
   showTurnStatus();
+  // Keeps the persisted game (if any) in sync with the color it'll resume
+  // as -- guarded on !gameOver so swapping sides "just to look" after a
+  // finished game doesn't resurrect it as resumable (nothing was cleared
+  // here; a finished game already cleared its own save via endGame()).
+  if (!gameOver) savePersistedGame(gs, humanColor, aiStrength);
 }
 
 // Changes the AI's strength *without* resetting the game -- unlike a color
@@ -444,6 +450,7 @@ void switchAiStrength(int newStrength) {
   drawUndoButton();
   if (gameOver) drawGameOver(lastGameOverMsg);
   showTurnStatus();
+  if (!gameOver) savePersistedGame(gs, humanColor, aiStrength); // see switchHumanColor()'s comment
 }
 
 void resetGame() {
@@ -467,6 +474,10 @@ void resetGame() {
   drawMenuButton();
   drawUndoButton();
   showTurnStatus();
+  // Overwrites whatever was previously saved with this fresh starting
+  // position -- so powering off right after NEW GAME, before any move is
+  // even made, still resumes correctly instead of falling back further.
+  savePersistedGame(gs, humanColor, aiStrength);
 }
 
 void drawBoard(GameState &gs) {
@@ -641,6 +652,19 @@ void getTouchSquare(int &row, int &col) {
   }
 }
 
+// Ends the game: status line, the red game-over banner, marks gameOver,
+// and clears the persisted game (below) -- a finished game has nothing
+// left to resume, and by this point a save from just before this move
+// completed is already sitting in flash claiming otherwise. Shared by
+// both completeHumanMove() and the AI-turn branch below -- was six
+// near-identical copies of this same triple before.
+void endGame(const char *statusMsg, const char *bannerMsg) {
+  drawStatus(statusMsg);
+  drawGameOver(bannerMsg);
+  gameOver = true;
+  clearPersistedGame();
+}
+
 // Finishes applying a human move already confirmed legal -- and, for a
 // promotion, already resolved to a specific piece via the promotion-choice
 // screen. Shared by the ordinary (non-promotion) move-completion path and
@@ -650,27 +674,22 @@ void completeHumanMove(Move &m) {
   saveUndoSnapshot(gs); // captures the position as it stood right before this move
   applyMove(gs, m);
   recordPosition(gs);
+  savePersistedGame(gs, humanColor, aiStrength);
   microMaxApplyMove(m.fromRow, m.fromCol, m.toRow, m.toCol);
   bookRecordMove(m.fromRow, m.fromCol, m.toRow, m.toCol);
 
   drawBoard(gs);
 
   if (isCheckmate(gs, -humanColor)) {
-    drawStatus("Checkmate! You win!");
-    drawGameOver("You Win!");
-    gameOver = true;
+    endGame("Checkmate! You win!", "You Win!");
     return;
   }
   if (isStalemate(gs, -humanColor)) {
-    drawStatus("Stalemate!");
-    drawGameOver("Stalemate!");
-    gameOver = true;
+    endGame("Stalemate!", "Stalemate!");
     return;
   }
   if (isDraw(gs)) {
-    drawStatus("Draw!");
-    drawGameOver("Draw!");
-    gameOver = true;
+    endGame("Draw!", "Draw!");
     return;
   }
   if (isInCheck(gs, -humanColor)) {
@@ -698,14 +717,26 @@ void setup() {
   touch.begin(touchSPI);
   touch.setRotation(0);
 
-  // Init game
-  initBoard(gs);
-  microMaxInit();
-  mmNodeBudget = STRENGTH_NODE_BUDGET[aiStrength];
-  bookReset();
-  resetPositionHistory();
-  recordPosition(gs); // the starting position itself counts as its own first occurrence
-  invalidateUndoSnapshot();
+  // Init game -- resume a persisted in-progress game if there is one
+  // (power cycled mid-game), otherwise start fresh. loadPersistedGame()
+  // fully populates gs and the engine/book/position-history globals
+  // directly when it succeeds, so none of the usual fresh-game init calls
+  // run in that case -- microMaxInit() in particular would stomp the
+  // just-restored mmB back to a fresh board.
+  if (loadPersistedGame(gs, humanColor, aiStrength)) {
+    mmNodeBudget = STRENGTH_NODE_BUDGET[aiStrength]; // not part of the saved blob
+    invalidateUndoSnapshot(); // Undo's single RAM-only snapshot never survives a reboot
+    gameOver = false; // a persisted game is only ever saved while still in progress
+  } else {
+    initBoard(gs);
+    microMaxInit();
+    mmNodeBudget = STRENGTH_NODE_BUDGET[aiStrength];
+    bookReset();
+    resetPositionHistory();
+    recordPosition(gs); // the starting position itself counts as its own first occurrence
+    invalidateUndoSnapshot();
+    savePersistedGame(gs, humanColor, aiStrength); // resumable from move zero, same as resetGame()
+  }
 
   tft.fillScreen(COLOR_BG);
   drawBoard(gs);
@@ -1063,6 +1094,7 @@ void loop() {
 
     applyMove(gs, best);
     recordPosition(gs);
+    savePersistedGame(gs, humanColor, aiStrength);
 
     drawBoard(gs);
 
@@ -1078,21 +1110,15 @@ void loop() {
     }
 
     if (isCheckmate(gs, humanColor)) {
-      drawStatus("Checkmate! AI wins!");
-      drawGameOver("AI Wins!");
-      gameOver = true;
+      endGame("Checkmate! AI wins!", "AI Wins!");
       return;
     }
     if (isStalemate(gs, humanColor)) {
-      drawStatus("Stalemate!");
-      drawGameOver("Stalemate!");
-      gameOver = true;
+      endGame("Stalemate!", "Stalemate!");
       return;
     }
     if (isDraw(gs)) {
-      drawStatus("Draw!");
-      drawGameOver("Draw!");
-      gameOver = true;
+      endGame("Draw!", "Draw!");
       return;
     }
     if (isInCheck(gs, humanColor)) {

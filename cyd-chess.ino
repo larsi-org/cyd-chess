@@ -26,6 +26,8 @@
 #include "book.h"
 #include "micromax.h"
 #include "persistence.h"
+#include "undo.h"
+#include "menu.h"
 
 // Override loopTask stack size to 64KB. arduino-esp32 v2.0.17 declares
 // `size_t getArduinoLoopTaskStackSize(void);` with C++ linkage in Arduino.h
@@ -53,8 +55,6 @@ void drawSquare(int row, int col, bool highlight, bool moveDot, GameState &gs);
 void drawBoard(GameState &gs);
 void redrawSquare(GameState &gs, int r, int c);
 void redrawSelectionChange(GameState &gs, int oldSelRow, int oldSelCol, bool oldDotSquare[8][8]);
-void invalidateUndoSnapshot();
-void drawUndoButton();
 void getTouchSquare(int &row, int &col);
 
 TFT_eSPI tft = TFT_eSPI();
@@ -97,7 +97,6 @@ bool inMenu = false;          // showing the menu screen, board hidden
 int aiStrength = 3; // 0=Easy 1=Medium 2=Hard 3=Expert
 bool inDifficultyMenu = false;
 
-const char *STRENGTH_NAMES[4] = {"EASY", "MEDIUM", "HARD", "EXPERT"};
 // Node budget: see mmNodeBudget's own comment in micromax.cpp -- lower means
 // a shallower/faster (weaker) search, same knob that already controls the
 // ~5s-per-move Expert default. Blunder %: once out of book, the chance per
@@ -230,177 +229,6 @@ void drawSquare(int row, int col, bool highlight, bool moveDot, GameState &gs) {
   if (gs.board[row][col] != EMPTY) {
     drawPiece(row, col, gs.board[row][col], gs.color[row][col]);
   }
-}
-
-// Undo / Menu buttons — bottom of screen, below the chess board.
-// 240×320 portrait: board occupies y=40..280; column labels at y=282..290;
-// buttons get the remaining strip y=294..318, split into two side by side
-// (5px margins, 10px gap: 5+110+10+110+5 = 240).
-#define UNDO_BTN_X       5
-#define MENU_BOTTOM_BTN_X 125
-#define BTN_Y            294
-#define BTN_W            110
-#define BTN_H            24
-
-void drawTextButton(int x, int y, int w, int h, const char *label,
-                     uint16_t fillColor, uint16_t borderColor, uint16_t textColor = TFT_WHITE) {
-  tft.fillRoundRect(x, y, w, h, 4, fillColor);
-  tft.drawRoundRect(x, y, w, h, 4, borderColor);
-  tft.setTextSize(1);
-  tft.setTextColor(textColor, fillColor);
-  // Centred-ish text — TFT_eSPI default font is ~6 pixels per character.
-  tft.setCursor(x + (w - (int)strlen(label) * 6) / 2, y + (h - 8) / 2);
-  tft.print(label);
-}
-
-// Was "NEW GAME" -- now opens the color-choice menu instead of resetting
-// directly, same button slot/color.
-void drawMenuButton() {
-  drawTextButton(MENU_BOTTOM_BTN_X, BTN_Y, BTN_W, BTN_H, "MENU", TFT_DARKGREEN, TFT_GREEN);
-}
-
-// Amber rather than Menu's green, so the two are easy to tell apart at
-// a glance -- a common "undo" color and distinct from "start over".
-void drawUndoButton() {
-  drawTextButton(UNDO_BTN_X, BTN_Y, BTN_W, BTN_H, "UNDO", 0x8400 /* dark amber */, TFT_ORANGE);
-}
-
-bool isTouchInButton(int x, int y, int w, int h) {
-  if (!touch.touched()) return false;
-  TS_Point p = touch.getPoint();
-  int tx = map(p.x, TOUCH_X_MIN, TOUCH_X_MAX, 0, 240);
-  int ty = map(p.y, TOUCH_Y_MIN, TOUCH_Y_MAX, 0, 320);
-  return (tx >= x && tx < x + w && ty >= y && ty < y + h);
-}
-
-bool isTouchOnMenuButton() {
-  return isTouchInButton(MENU_BOTTOM_BTN_X, BTN_Y, BTN_W, BTN_H);
-}
-
-bool isTouchOnUndoButton() {
-  return isTouchInButton(UNDO_BTN_X, BTN_Y, BTN_W, BTN_H);
-}
-
-// ─── Menu screen ────────────────────────────────────────────────────────────
-// Covers the whole screen (board/buttons hidden) while inMenu is true. Three
-// independent live settings live here (PLAY WHITE/PLAY BLACK, DIFFICULTY --
-// each applies immediately, mid-game, no reset, via switchHumanColor()/
-// switchAiStrength() below) plus NEW GAME, which just starts a fresh game
-// using whatever color/difficulty are *currently* set rather than asking
-// again -- color and level are each a standalone, always-live choice, not
-// tied to starting a new game.
-#define MENU_BTN_W          200
-#define MENU_BTN_H          45
-#define MENU_BTN_GAP        8
-#define MENU_BTN_X          ((240 - MENU_BTN_W) / 2)
-#define MENU_NEWGAME_BTN_Y  85
-#define MENU_WHITE_BTN_Y    (MENU_NEWGAME_BTN_Y + MENU_BTN_H + MENU_BTN_GAP)
-#define MENU_BLACK_BTN_Y    (MENU_WHITE_BTN_Y + MENU_BTN_H + MENU_BTN_GAP)
-#define MENU_DIFF_BTN_Y     (MENU_BLACK_BTN_Y + MENU_BTN_H + MENU_BTN_GAP)
-
-void drawMenuScreen() {
-  tft.fillScreen(COLOR_BG);
-  tft.setTextSize(2);
-  tft.setTextColor(TFT_YELLOW, COLOR_BG);
-  tft.setCursor(60, 28);
-  tft.print("Menu");
-
-  tft.setTextSize(1);
-  tft.setTextColor(TFT_WHITE, COLOR_BG);
-  char caption[40];
-  snprintf(caption, sizeof(caption), "Now playing: %s, %s",
-           humanColor == WHITE_PIECE ? "White" : "Black", STRENGTH_NAMES[aiStrength]);
-  tft.setCursor((240 - (int)strlen(caption) * 6) / 2, 58);
-  tft.print(caption);
-
-  drawTextButton(MENU_BTN_X, MENU_NEWGAME_BTN_Y, MENU_BTN_W, MENU_BTN_H,
-                 "NEW GAME", TFT_DARKGREEN, TFT_GREEN);
-  drawTextButton(MENU_BTN_X, MENU_WHITE_BTN_Y, MENU_BTN_W, MENU_BTN_H,
-                 "PLAY WHITE", COLOR_WHITE_P, TFT_BLACK, TFT_BLACK);
-  drawTextButton(MENU_BTN_X, MENU_BLACK_BTN_Y, MENU_BTN_W, MENU_BTN_H,
-                 "PLAY BLACK", COLOR_BLACK_P, TFT_WHITE, TFT_WHITE);
-  drawTextButton(MENU_BTN_X, MENU_DIFF_BTN_Y, MENU_BTN_W, MENU_BTN_H,
-                 "DIFFICULTY", TFT_NAVY, TFT_CYAN, TFT_WHITE);
-}
-
-bool isTouchOnMenuNewGameButton() {
-  return isTouchInButton(MENU_BTN_X, MENU_NEWGAME_BTN_Y, MENU_BTN_W, MENU_BTN_H);
-}
-
-bool isTouchOnPlayWhiteButton() {
-  return isTouchInButton(MENU_BTN_X, MENU_WHITE_BTN_Y, MENU_BTN_W, MENU_BTN_H);
-}
-
-bool isTouchOnPlayBlackButton() {
-  return isTouchInButton(MENU_BTN_X, MENU_BLACK_BTN_Y, MENU_BTN_W, MENU_BTN_H);
-}
-
-bool isTouchOnMenuDifficultyButton() {
-  return isTouchInButton(MENU_BTN_X, MENU_DIFF_BTN_Y, MENU_BTN_W, MENU_BTN_H);
-}
-
-// ─── Difficulty screen (reached via MENU's DIFFICULTY button) ─────────────
-// Picking a level here applies immediately (switchAiStrength() below, same
-// live-setting treatment as PLAY WHITE/PLAY BLACK) -- it does not start a
-// new game.
-#define DIFF_BTN_W    200
-#define DIFF_BTN_H    45
-#define DIFF_BTN_X    ((240 - DIFF_BTN_W) / 2)
-#define DIFF_BTN_GAP  10
-#define DIFF_BTN_Y0   90
-#define DIFF_BTN_Y(i) (DIFF_BTN_Y0 + (i) * (DIFF_BTN_H + DIFF_BTN_GAP))
-
-void drawDifficultyMenu() {
-  tft.fillScreen(COLOR_BG);
-  tft.setTextSize(2);
-  tft.setTextColor(TFT_YELLOW, COLOR_BG);
-  tft.setCursor(28, 50);
-  tft.print("Difficulty");
-
-  // Light-to-dark progression (green..red), text color kept readable on each.
-  uint16_t fill[4]    = {TFT_GREEN, TFT_YELLOW, TFT_ORANGE, TFT_RED};
-  uint16_t border[4]  = {TFT_BLACK, TFT_BLACK,  TFT_BLACK,  TFT_WHITE};
-  uint16_t textCol[4] = {TFT_BLACK, TFT_BLACK,  TFT_BLACK,  TFT_WHITE};
-
-  for (int i = 0; i < 4; i++) {
-    drawTextButton(DIFF_BTN_X, DIFF_BTN_Y(i), DIFF_BTN_W, DIFF_BTN_H,
-                   STRENGTH_NAMES[i], fill[i], border[i], textCol[i]);
-  }
-}
-
-bool isTouchOnDifficultyButton(int idx) {
-  return isTouchInButton(DIFF_BTN_X, DIFF_BTN_Y(idx), DIFF_BTN_W, DIFF_BTN_H);
-}
-
-// ─── Promotion choice ───────────────────────────────────────────────────────
-// Shown only for the human's own promoting moves -- AI/book moves always
-// auto-queen (see promoteTo's own comment in chess_rules.h; correct almost
-// always, and consistent with how micro-Max evaluates a promoted pawn
-// internally regardless of what this sketch's own board says it became).
-#define PROMO_BTN_W    200
-#define PROMO_BTN_H    45
-#define PROMO_BTN_X    ((240 - PROMO_BTN_W) / 2)
-#define PROMO_BTN_GAP  10
-#define PROMO_BTN_Y0   80
-#define PROMO_BTN_Y(i) (PROMO_BTN_Y0 + (i) * (PROMO_BTN_H + PROMO_BTN_GAP))
-
-const char *PROMO_NAMES[4]  = {"QUEEN", "ROOK", "BISHOP", "KNIGHT"};
-const int PROMO_PIECES[4]  = {QUEEN, ROOK, BISHOP, KNIGHT};
-
-void drawPromotionMenu() {
-  tft.fillScreen(COLOR_BG);
-  tft.setTextSize(2);
-  tft.setTextColor(TFT_YELLOW, COLOR_BG);
-  tft.setCursor(20, 40);
-  tft.print("Promote to:");
-  for (int i = 0; i < 4; i++) {
-    drawTextButton(PROMO_BTN_X, PROMO_BTN_Y(i), PROMO_BTN_W, PROMO_BTN_H,
-                   PROMO_NAMES[i], TFT_NAVY, TFT_CYAN, TFT_WHITE);
-  }
-}
-
-bool isTouchOnPromotionButton(int idx) {
-  return isTouchInButton(PROMO_BTN_X, PROMO_BTN_Y(idx), PROMO_BTN_W, PROMO_BTN_H);
 }
 
 // Changes which color the human plays *without* resetting the game -- supports
@@ -553,67 +381,6 @@ void redrawSelectionChange(GameState &gs, int oldSelRow, int oldSelCol, bool old
   for (int r = 0; r < 8; r++)
     for (int c = 0; c < 8; c++)
       if (touched[r][c]) redrawSquare(gs, r, c);
-}
-
-// ─── Undo (single-level) ───────────────────────────────────────────────────
-// One saved snapshot, taken right before the human's move is applied --
-// restoring it always reverts to "right before my last move", which also
-// erases whatever the AI replied with in between (there's no sensible way
-// to undo only the AI's reply and leave the human's own move in place, and
-// a kid using this to take back a blunder wants the whole exchange gone
-// anyway). No stack, no redo -- exactly one level, by design, per Lars.
-//
-// Three separate pieces of state have to travel together or the AI and this
-// sketch's own board desync: this sketch's own GameState, micro-Max's own
-// board/running state (it never sees an undo otherwise -- it would still
-// think the undone moves happened), and the opening book's move history
-// (same reason -- otherwise it could offer a book move that no longer
-// matches what's actually on the board).
-struct UndoSnapshot {
-  bool valid;
-  GameState gs;
-  signed char mmB[129];
-  int mmJ, mmZ, mmk, mmR, mmQ, mmO;
-  int plyCount;
-  bool outOfBook;
-  BookMove moveHistory[BOOK_MAX_PLY];
-  uint32_t positionHistory[MAX_POSITION_HISTORY];
-  int positionHistoryCount;
-};
-UndoSnapshot undoSnapshot = { false };
-
-void invalidateUndoSnapshot() {
-  undoSnapshot.valid = false;
-}
-
-void saveUndoSnapshot(GameState &g) {
-  undoSnapshot.valid = true;
-  undoSnapshot.gs = g; // halfmoveClock rides along inside GameState for free
-  memcpy(undoSnapshot.mmB, mmB, sizeof(mmB));
-  undoSnapshot.mmJ = mmJ; undoSnapshot.mmZ = mmZ; undoSnapshot.mmk = mmk;
-  undoSnapshot.mmR = mmR; undoSnapshot.mmQ = mmQ; undoSnapshot.mmO = mmO;
-  undoSnapshot.plyCount = plyCount;
-  undoSnapshot.outOfBook = outOfBook;
-  memcpy(undoSnapshot.moveHistory, moveHistory, sizeof(moveHistory));
-  memcpy(undoSnapshot.positionHistory, positionHistory, sizeof(positionHistory));
-  undoSnapshot.positionHistoryCount = positionHistoryCount;
-}
-
-// Returns false (and leaves everything untouched) if nothing's been saved
-// yet this game -- caller just shows "Nothing to undo" rather than acting.
-bool restoreUndoSnapshot(GameState &g) {
-  if (!undoSnapshot.valid) return false;
-  g = undoSnapshot.gs;
-  memcpy(mmB, undoSnapshot.mmB, sizeof(mmB));
-  mmJ = undoSnapshot.mmJ; mmZ = undoSnapshot.mmZ; mmk = undoSnapshot.mmk;
-  mmR = undoSnapshot.mmR; mmQ = undoSnapshot.mmQ; mmO = undoSnapshot.mmO;
-  plyCount = undoSnapshot.plyCount;
-  outOfBook = undoSnapshot.outOfBook;
-  memcpy(moveHistory, undoSnapshot.moveHistory, sizeof(moveHistory));
-  memcpy(positionHistory, undoSnapshot.positionHistory, sizeof(positionHistory));
-  positionHistoryCount = undoSnapshot.positionHistoryCount;
-  undoSnapshot.valid = false; // one level only -- used up until the next move
-  return true;
 }
 
 // ─── Touch Input ───────────────────────────────────────────────────────────
@@ -868,7 +635,7 @@ void loop() {
       unsigned long _waitStart = millis();
       while (touch.touched() && millis() - _waitStart < 2000) { delay(10); }
       inMenu = true;
-      drawMenuScreen();
+      drawMenuScreen(humanColor, aiStrength);
       return;
     }
   }

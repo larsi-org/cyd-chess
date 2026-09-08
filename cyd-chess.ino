@@ -77,8 +77,11 @@ XPT2046_Touchscreen touch(TOUCH_CS_PIN, TOUCH_IRQ_PIN);
 #define BOARD_OFFSET_Y 40
 
 // TFT Colors
-#define COLOR_LIGHT_SQ  0xFFE0
-#define COLOR_DARK_SQ   0x6B4D
+// Light/dark square colors match WinBoard/XBoard's own classic default
+// theme (lightSquareColor #C8C365, darkSquareColor #77A26D) -- yellow
+// gave white pieces/outlines too little contrast against it.
+#define COLOR_LIGHT_SQ  0xCE0C
+#define COLOR_DARK_SQ   0x750D
 #define COLOR_SELECTED  0x07E0
 #define COLOR_MOVE_DOT  0x07FF
 #define COLOR_BG        0x0000

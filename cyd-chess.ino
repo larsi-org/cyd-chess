@@ -429,11 +429,9 @@ void switchHumanColor(int newColor) {
   drawUndoButton();
   if (gameOver) drawGameOver(lastGameOverMsg);
   showTurnStatus();
-  // Keeps the persisted game (if any) in sync with the color it'll resume
-  // as -- guarded on !gameOver so swapping sides "just to look" after a
-  // finished game doesn't resurrect it as resumable (nothing was cleared
-  // here; a finished game already cleared its own save via endGame()).
-  if (!gameOver) savePersistedGame(gs, humanColor, aiStrength);
+  // Settings are their own tiny record, independent of whether a game is
+  // in progress -- always cheap to keep current, unconditionally.
+  saveSettings(humanColor, aiStrength);
 }
 
 // Changes the AI's strength *without* resetting the game -- unlike a color
@@ -450,7 +448,7 @@ void switchAiStrength(int newStrength) {
   drawUndoButton();
   if (gameOver) drawGameOver(lastGameOverMsg);
   showTurnStatus();
-  if (!gameOver) savePersistedGame(gs, humanColor, aiStrength); // see switchHumanColor()'s comment
+  saveSettings(humanColor, aiStrength); // see switchHumanColor()'s comment
 }
 
 void resetGame() {
@@ -474,10 +472,10 @@ void resetGame() {
   drawMenuButton();
   drawUndoButton();
   showTurnStatus();
-  // Overwrites whatever was previously saved with this fresh starting
-  // position -- so powering off right after NEW GAME, before any move is
-  // even made, still resumes correctly instead of falling back further.
-  savePersistedGame(gs, humanColor, aiStrength);
+  // Nothing worth resuming yet at the bare starting position -- clear
+  // whatever a previous game left behind rather than writing this one out
+  // (it'll get saved for real the moment an actual move is made).
+  clearPersistedGame();
 }
 
 void drawBoard(GameState &gs) {
@@ -674,7 +672,7 @@ void completeHumanMove(Move &m) {
   saveUndoSnapshot(gs); // captures the position as it stood right before this move
   applyMove(gs, m);
   recordPosition(gs);
-  savePersistedGame(gs, humanColor, aiStrength);
+  savePersistedGame(gs);
   microMaxApplyMove(m.fromRow, m.fromCol, m.toRow, m.toCol);
   bookRecordMove(m.fromRow, m.fromCol, m.toRow, m.toCol);
 
@@ -717,13 +715,18 @@ void setup() {
   touch.begin(touchSPI);
   touch.setRotation(0);
 
-  // Init game -- resume a persisted in-progress game if there is one
-  // (power cycled mid-game), otherwise start fresh. loadPersistedGame()
-  // fully populates gs and the engine/book/position-history globals
-  // directly when it succeeds, so none of the usual fresh-game init calls
-  // run in that case -- microMaxInit() in particular would stomp the
-  // just-restored mmB back to a fresh board.
-  if (loadPersistedGame(gs, humanColor, aiStrength)) {
+  // Settings (color/difficulty) are independent of whether a game is in
+  // progress -- load them first, keeping the compiled-in defaults if
+  // nothing's ever been saved.
+  loadSettings(humanColor, aiStrength);
+
+  // Resume a persisted in-progress game if there is one (power cycled
+  // mid-game), otherwise start fresh. loadPersistedGame() fully populates
+  // gs and the engine/book/position-history globals directly when it
+  // succeeds, so none of the usual fresh-game init calls run in that case
+  // -- microMaxInit() in particular would stomp the just-restored mmB
+  // back to a fresh board.
+  if (loadPersistedGame(gs)) {
     mmNodeBudget = STRENGTH_NODE_BUDGET[aiStrength]; // not part of the saved blob
     invalidateUndoSnapshot(); // Undo's single RAM-only snapshot never survives a reboot
     gameOver = false; // a persisted game is only ever saved while still in progress
@@ -735,7 +738,8 @@ void setup() {
     resetPositionHistory();
     recordPosition(gs); // the starting position itself counts as its own first occurrence
     invalidateUndoSnapshot();
-    savePersistedGame(gs, humanColor, aiStrength); // resumable from move zero, same as resetGame()
+    // Nothing worth persisting yet at the bare starting position -- see
+    // resetGame()'s matching comment.
   }
 
   tft.fillScreen(COLOR_BG);
@@ -1094,7 +1098,7 @@ void loop() {
 
     applyMove(gs, best);
     recordPosition(gs);
-    savePersistedGame(gs, humanColor, aiStrength);
+    savePersistedGame(gs);
 
     drawBoard(gs);
 

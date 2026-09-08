@@ -10,14 +10,13 @@
 #include "micromax.h"
 #include "book.h"
 
-// Everything needed to fully resume a game -- deliberately the same field
-// list UndoSnapshot (in cyd-chess.ino) already uses, plus humanColor/
-// aiStrength, so a resumed game comes back configured the same way, not
-// just the same board. A *separate* struct from UndoSnapshot rather than a
-// reuse of it, though: this is captured at a different moment (right after
-// a move completes, representing the current position) than Undo's own
-// snapshot (right before the human's move, specifically so Undo can revert
-// to it) -- same shape, different point in the move sequence.
+// Everything needed to fully resume a game -- the same field list
+// UndoSnapshot (in cyd-chess.ino) already uses, minus humanColor/
+// aiStrength: those live in their own tiny SavedSettings record instead
+// (see persistence.h's own comment for why), so this struct only has to
+// change when the board/engine/book/history actually does -- which, in
+// practice, is exactly "a real move happened," never "someone tapped a
+// color or difficulty button."
 struct SavedGame {
   GameState gs;
   signed char mmB[129];
@@ -27,14 +26,58 @@ struct SavedGame {
   BookMove moveHistory[BOOK_MAX_PLY];
   uint32_t positionHistory[MAX_POSITION_HISTORY];
   int positionHistoryCount;
+};
+
+struct SavedSettings {
   int humanColor;
   int aiStrength;
 };
 
-#define PREFS_NAMESPACE "cydchess"
-#define PREFS_KEY       "save"
+#define PREFS_NAMESPACE     "cydchess"
+#define PREFS_KEY_GAME      "save"
+#define PREFS_KEY_SETTINGS  "settings"
 
-void savePersistedGame(GameState &gs, int humanColor, int aiStrength) {
+// Writes `value` to `key` unless an identical value is already stored
+// there. The read is free in wear terms (flash reads don't degrade the
+// cells at all, only erase/program cycles do); skipping the write when
+// nothing changed avoids a real flash write for a genuine no-op (e.g.
+// tapping PLAY WHITE while already White). This is as fine-grained as
+// skipping-unchanged-writes can usefully get here: flash only erases in
+// whole sectors, never per-byte, and Preferences' own putBytes() always
+// replaces a key's stored value wholesale rather than patching it in
+// place -- so there's no partial-update primitive underneath for a
+// byte-level diff to hand anything to, even if we computed one ourselves.
+template <typename T>
+static void putIfChanged(Preferences &prefs, const char *key, const T &value) {
+  T existing;
+  bool unchanged = prefs.getBytesLength(key) == sizeof(T) &&
+                    prefs.getBytes(key, &existing, sizeof(T)) == sizeof(T) &&
+                    memcmp(&existing, &value, sizeof(T)) == 0;
+  if (!unchanged) prefs.putBytes(key, &value, sizeof(T));
+}
+
+void saveSettings(int humanColor, int aiStrength) {
+  SavedSettings s = {humanColor, aiStrength};
+  Preferences prefs;
+  prefs.begin(PREFS_NAMESPACE, false);
+  putIfChanged(prefs, PREFS_KEY_SETTINGS, s);
+  prefs.end();
+}
+
+bool loadSettings(int &humanColor, int &aiStrength) {
+  Preferences prefs;
+  prefs.begin(PREFS_NAMESPACE, false);
+  SavedSettings s;
+  bool ok = prefs.getBytesLength(PREFS_KEY_SETTINGS) == sizeof(s) &&
+            prefs.getBytes(PREFS_KEY_SETTINGS, &s, sizeof(s)) == sizeof(s);
+  prefs.end();
+  if (!ok) return false;
+  humanColor = s.humanColor;
+  aiStrength = s.aiStrength;
+  return true;
+}
+
+void savePersistedGame(GameState &gs) {
   SavedGame saved;
   saved.gs = gs;
   memcpy(saved.mmB, mmB, sizeof(mmB));
@@ -45,29 +88,27 @@ void savePersistedGame(GameState &gs, int humanColor, int aiStrength) {
   memcpy(saved.moveHistory, moveHistory, sizeof(moveHistory));
   memcpy(saved.positionHistory, positionHistory, sizeof(positionHistory));
   saved.positionHistoryCount = positionHistoryCount;
-  saved.humanColor = humanColor;
-  saved.aiStrength = aiStrength;
 
   Preferences prefs;
   prefs.begin(PREFS_NAMESPACE, false);
-  prefs.putBytes(PREFS_KEY, &saved, sizeof(saved));
+  putIfChanged(prefs, PREFS_KEY_GAME, saved);
   prefs.end();
 }
 
-bool loadPersistedGame(GameState &gs, int &humanColor, int &aiStrength) {
+bool loadPersistedGame(GameState &gs) {
   Preferences prefs;
   prefs.begin(PREFS_NAMESPACE, false);
 
   // Only trust a blob whose length exactly matches -- a mismatched size
   // (nothing saved yet, or a stale layout from a firmware update that
   // changed SavedGame's shape) means there's nothing safe to resume from.
-  if (prefs.getBytesLength(PREFS_KEY) != sizeof(SavedGame)) {
+  if (prefs.getBytesLength(PREFS_KEY_GAME) != sizeof(SavedGame)) {
     prefs.end();
     return false;
   }
 
   SavedGame saved;
-  prefs.getBytes(PREFS_KEY, &saved, sizeof(saved));
+  prefs.getBytes(PREFS_KEY_GAME, &saved, sizeof(saved));
   prefs.end();
 
   gs = saved.gs;
@@ -79,14 +120,12 @@ bool loadPersistedGame(GameState &gs, int &humanColor, int &aiStrength) {
   memcpy(moveHistory, saved.moveHistory, sizeof(moveHistory));
   memcpy(positionHistory, saved.positionHistory, sizeof(positionHistory));
   positionHistoryCount = saved.positionHistoryCount;
-  humanColor = saved.humanColor;
-  aiStrength = saved.aiStrength;
   return true;
 }
 
 void clearPersistedGame() {
   Preferences prefs;
   prefs.begin(PREFS_NAMESPACE, false);
-  prefs.remove(PREFS_KEY);
+  prefs.remove(PREFS_KEY_GAME);
   prefs.end();
 }

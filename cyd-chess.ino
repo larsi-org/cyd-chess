@@ -1,4 +1,12 @@
 // Chess game for ESP32-2432S028R with ILI9341 TFT display
+//
+// Started from Schematik's "Touchscreen Chess Game on a Cheap Yellow
+// Display" guide (schematik.io/guides/esp32/build-a-touchscreen-chess-game-on-a-cheap-yellow-display)
+// -- the touch/TFT pin wiring and the overall setup()/loop() structure
+// trace back to that base sketch; the engine, pieces, rules, menu, undo,
+// and persistence have all since been replaced or added (each credited in
+// its own file). See larsi.org/make/cyd-chess/ for the full write-up.
+//
 // Player (White or Black, chosen from the MENU) vs AI -- rules/board/move
 // generation (chess_rules.h/.cpp), H.G. Muller's micro-Max engine
 // (micromax.h/.cpp), a small opening book (book.h/.cpp), and piece graphics

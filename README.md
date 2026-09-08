@@ -30,9 +30,9 @@ arduino-cli upload -p /dev/ttyUSB0 --fqbn esp32:esp32:esp32 .
 |---|---|
 | `cyd-chess.ino` | `setup()`/`loop()`, touch handling, board rendering, and the game-lifecycle glue (`resetGame()`, `switchHumanColor()`, `switchAiStrength()`, `completeHumanMove()`/`endGame()`) that ties every other file together. |
 | `chess_rules.h`/`.cpp` | The authoritative rules: board/move representation, move generation (castling/en passant/promotion), check/checkmate/stalemate, and draw detection (repetition, 50-move rule, insufficient material). Zero display or touch dependency. |
-| `micromax.h`/`.cpp` | H.G. Muller's micro-Max 4.8 engine, vendored near-verbatim. Used only to propose move candidates -- every move it suggests is cross-checked against `chess_rules.cpp`'s own legal-move list before being trusted. |
-| `book.h`/`.cpp` | A 14-line opening book (from [lichess-org/chess-openings](https://github.com/lichess-org/chess-openings)), checked before the engine searches. |
-| `pieces.h` | Piece bitmap graphics (Sergey Urusov's Arduino Mega Chess II glyphs) -- just the bitmap tables, no drawing logic. |
+| `micromax.h`/`.cpp` | [H.G. Muller's micro-Max 4.8](https://home.hccnet.nl/h.g.muller/umax4_8.c) engine, vendored near-verbatim. Used only to propose move candidates -- every move it suggests is cross-checked against `chess_rules.cpp`'s own legal-move list before being trusted. |
+| `book.h`/`.cpp` | A 14-line opening book (from [lichess-org/chess-openings](https://github.com/lichess-org/chess-openings), CC0), checked before the engine searches. |
+| `pieces.h` | Piece bitmap graphics from Sergey Urusov's Arduino Mega Chess II, via its [M5Stack port](https://github.com/m4k3r-org/M5Stack-MegaChess) -- just the bitmap tables, no drawing logic. |
 | `menu.h`/`.cpp` | The MENU/difficulty/promotion screens: drawing and touch-hit-testing only. |
 | `undo.h`/`.cpp` | The single-level undo snapshot. Zero display dependency. |
 | `persistence.h`/`.cpp` | Saves/resumes the whole game, and separately the color/difficulty settings, across a power cycle via the ESP32 `Preferences`/NVS library. Zero display dependency. |

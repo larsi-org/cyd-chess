@@ -6,7 +6,7 @@
 #include "book.h"
 
 // ─── Opening Book ───────────────────────────────────────────────────────────
-// A small set of named lines from lichess-org/chess-openings (CC0), covering
+// A small set of named lines from github.com/lichess-org/chess-openings (CC0), covering
 // principled replies to White's common first moves. Bypasses micro-Max's
 // search entirely while the game's own move history still matches a line's
 // prefix -- the book's next move is cross-checked against this sketch's own

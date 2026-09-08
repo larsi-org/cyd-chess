@@ -32,7 +32,7 @@ arduino-cli upload -p /dev/ttyUSB0 --fqbn esp32:esp32:esp32 .
 | `chess_rules.h`/`.cpp` | The authoritative rules: board/move representation, move generation (castling/en passant/promotion), check/checkmate/stalemate, and draw detection (repetition, 50-move rule, insufficient material). Zero display or touch dependency. |
 | `micromax.h`/`.cpp` | [H.G. Muller's micro-Max 4.8](https://home.hccnet.nl/h.g.muller/umax4_8.c) engine, vendored near-verbatim. Used only to propose move candidates -- every move it suggests is cross-checked against `chess_rules.cpp`'s own legal-move list before being trusted. |
 | `book.h`/`.cpp` | A 14-line opening book (from [lichess-org/chess-openings](https://github.com/lichess-org/chess-openings), CC0), checked before the engine searches. |
-| `pieces.h` | Piece bitmap graphics, converted from the "SmallPng" set in [samboy/ChessGraphics](https://github.com/samboy/ChessGraphics) (public domain) -- just the bitmap tables, no drawing logic. |
+| `pieces.h` | Two selectable piece bitmap sets (MENU's PIECE SET option) -- Classic, converted from the "SmallPng" set in [samboy/ChessGraphics](https://github.com/samboy/ChessGraphics) (public domain), and Unicode, derived from [DejaVu Sans](https://dejavu-fonts.github.io/)'s own Unicode chess symbol glyphs (Bitstream-Vera-derived license) -- just the bitmap tables, no drawing logic. |
 | `menu.h`/`.cpp` | The MENU/difficulty/promotion screens: drawing and touch-hit-testing only. |
 | `undo.h`/`.cpp` | The single-level undo snapshot. Zero display dependency. |
 | `persistence.h`/`.cpp` | Saves/resumes the whole game, and separately the color/difficulty settings, across a power cycle via the ESP32 `Preferences`/NVS library. Zero display dependency. |

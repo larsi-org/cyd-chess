@@ -117,6 +117,12 @@ bool inDifficultyMenu = false;
 const int STRENGTH_NODE_BUDGET[4] = {500, 2000, 8000, 30000};
 const int STRENGTH_BLUNDER_PCT[4] = {20, 8, 2, 0};
 
+// MENU's PIECE SET screen -- another standalone, always-live setting (see
+// pieces.h for what each index selects). Default 0 (Classic) so a fresh
+// boot looks exactly like it did before this feature existed.
+int pieceSet = 0;
+bool inPieceSetMenu = false;
+
 // Set when the human's tapped move reaches the back rank -- the move
 // itself is held here, promoteTo unset, until the promotion-choice screen
 // picks a piece and completeHumanMove() actually applies it.
@@ -210,8 +216,8 @@ void drawPiece(int row, int col, int piece, int pieceColor) {
   uint16_t fg = (pieceColor == WHITE_PIECE) ? COLOR_WHITE_P : COLOR_BLACK_P;
   uint16_t outline = (pieceColor == WHITE_PIECE) ? TFT_BLACK : TFT_WHITE;
 
-  drawPieceBitmap(x, y, PIECE_FILL[idx], fg);
-  drawPieceBitmap(x, y, PIECE_OUTLINE[idx], outline);
+  drawPieceBitmap(x, y, PIECE_FILL_SETS[pieceSet][idx], fg);
+  drawPieceBitmap(x, y, PIECE_OUTLINE_SETS[pieceSet][idx], outline);
 }
 
 void drawSquare(int row, int col, bool highlight, bool moveDot, GameState &gs) {
@@ -270,7 +276,7 @@ void switchHumanColor(int newColor) {
   showTurnStatus();
   // Settings are their own tiny record, independent of whether a game is
   // in progress -- always cheap to keep current, unconditionally.
-  saveSettings(humanColor, aiStrength);
+  saveSettings(humanColor, aiStrength, pieceSet);
 }
 
 // Changes the AI's strength *without* resetting the game -- unlike a color
@@ -287,7 +293,21 @@ void switchAiStrength(int newStrength) {
   drawUndoButton();
   if (gameOver) drawGameOver(lastGameOverMsg);
   showTurnStatus();
-  saveSettings(humanColor, aiStrength); // see switchHumanColor()'s comment
+  saveSettings(humanColor, aiStrength, pieceSet); // see switchHumanColor()'s comment
+}
+
+// Changes which piece bitmap set drawPiece() reads -- same standalone,
+// always-live treatment as color/difficulty: no engine/board state to
+// resync, just a redraw with the new set and a settings save.
+void switchPieceSet(int newSet) {
+  pieceSet = newSet;
+  tft.fillScreen(COLOR_BG);
+  drawBoard(gs);
+  drawMenuButton();
+  drawUndoButton();
+  if (gameOver) drawGameOver(lastGameOverMsg);
+  showTurnStatus();
+  saveSettings(humanColor, aiStrength, pieceSet);
 }
 
 void resetGame() {
@@ -496,7 +516,7 @@ void setup() {
   // Settings (color/difficulty) are independent of whether a game is in
   // progress -- load them first, keeping the compiled-in defaults if
   // nothing's ever been saved.
-  loadSettings(humanColor, aiStrength);
+  loadSettings(humanColor, aiStrength, pieceSet);
 
   // Resume a persisted in-progress game if there is one (power cycled
   // mid-game), otherwise start fresh. loadPersistedGame() fully populates
@@ -589,6 +609,17 @@ void loop() {
       }
       return;
     }
+    if (isTouchOnMenuPieceSetButton()) {
+      delay(50); // debounce
+      if (isTouchOnMenuPieceSetButton()) {
+        unsigned long _waitStart = millis();
+        while (touch.touched() && millis() - _waitStart < 2000) { delay(10); }
+        inMenu = false;
+        inPieceSetMenu = true;
+        drawPieceSetMenu();
+      }
+      return;
+    }
     return;
   }
 
@@ -604,6 +635,25 @@ void loop() {
           while (touch.touched() && millis() - _waitStart < 2000) { delay(10); }
           inDifficultyMenu = false;
           switchAiStrength(i);
+        }
+        return;
+      }
+    }
+    return;
+  }
+
+  // Piece set menu: MENU's PIECE SET button leads here. Picking a set
+  // applies immediately (switchPieceSet()), same standalone, always-live
+  // treatment as color/difficulty.
+  if (inPieceSetMenu) {
+    for (int i = 0; i < NUM_PIECE_SETS; i++) {
+      if (isTouchOnPieceSetButton(i)) {
+        delay(50); // debounce
+        if (isTouchOnPieceSetButton(i)) {
+          unsigned long _waitStart = millis();
+          while (touch.touched() && millis() - _waitStart < 2000) { delay(10); }
+          inPieceSetMenu = false;
+          switchPieceSet(i);
         }
         return;
       }
@@ -646,7 +696,7 @@ void loop() {
       unsigned long _waitStart = millis();
       while (touch.touched() && millis() - _waitStart < 2000) { delay(10); }
       inMenu = true;
-      drawMenuScreen(humanColor, aiStrength);
+      drawMenuScreen(humanColor, aiStrength, pieceSet);
       return;
     }
   }

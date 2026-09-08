@@ -16,14 +16,18 @@ void drawUndoButton();
 bool isTouchOnMenuButton();
 bool isTouchOnUndoButton();
 
-void drawMenuScreen(int humanColor, int aiStrength);
+void drawMenuScreen(int humanColor, int aiStrength, int pieceSet);
 bool isTouchOnMenuNewGameButton();
 bool isTouchOnPlayWhiteButton();
 bool isTouchOnPlayBlackButton();
 bool isTouchOnMenuDifficultyButton();
+bool isTouchOnMenuPieceSetButton();
 
 void drawDifficultyMenu();
 bool isTouchOnDifficultyButton(int idx);
+
+void drawPieceSetMenu();
+bool isTouchOnPieceSetButton(int idx);
 
 void drawPromotionMenu();
 bool isTouchOnPromotionButton(int idx);

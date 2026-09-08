@@ -12,11 +12,11 @@
 
 // Everything needed to fully resume a game -- the same field list
 // UndoSnapshot (in cyd-chess.ino) already uses, minus humanColor/
-// aiStrength: those live in their own tiny SavedSettings record instead
-// (see persistence.h's own comment for why), so this struct only has to
-// change when the board/engine/book/history actually does -- which, in
-// practice, is exactly "a real move happened," never "someone tapped a
-// color or difficulty button."
+// aiStrength/pieceSet: those live in their own tiny SavedSettings record
+// instead (see persistence.h's own comment for why), so this struct only
+// has to change when the board/engine/book/history actually does --
+// which, in practice, is exactly "a real move happened," never "someone
+// tapped a color, difficulty, or piece set button."
 struct SavedGame {
   GameState gs;
   signed char mmB[129];
@@ -31,6 +31,7 @@ struct SavedGame {
 struct SavedSettings {
   int humanColor;
   int aiStrength;
+  int pieceSet;
 };
 
 #define PREFS_NAMESPACE     "cydchess"
@@ -56,15 +57,15 @@ static void putIfChanged(Preferences &prefs, const char *key, const T &value) {
   if (!unchanged) prefs.putBytes(key, &value, sizeof(T));
 }
 
-void saveSettings(int humanColor, int aiStrength) {
-  SavedSettings s = {humanColor, aiStrength};
+void saveSettings(int humanColor, int aiStrength, int pieceSet) {
+  SavedSettings s = {humanColor, aiStrength, pieceSet};
   Preferences prefs;
   prefs.begin(PREFS_NAMESPACE, false);
   putIfChanged(prefs, PREFS_KEY_SETTINGS, s);
   prefs.end();
 }
 
-bool loadSettings(int &humanColor, int &aiStrength) {
+bool loadSettings(int &humanColor, int &aiStrength, int &pieceSet) {
   Preferences prefs;
   prefs.begin(PREFS_NAMESPACE, false);
   SavedSettings s;
@@ -74,6 +75,7 @@ bool loadSettings(int &humanColor, int &aiStrength) {
   if (!ok) return false;
   humanColor = s.humanColor;
   aiStrength = s.aiStrength;
+  pieceSet = s.pieceSet;
   return true;
 }
 

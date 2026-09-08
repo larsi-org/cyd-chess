@@ -5,6 +5,7 @@
 #include <XPT2046_Touchscreen.h>
 #include "menu.h"
 #include "chess_rules.h" // QUEEN/ROOK/BISHOP/KNIGHT (PROMO_PIECES, below)
+#include "pieces.h" // NUM_PIECE_SETS/PIECE_SET_NAMES
 
 // Defined in cyd-chess.ino -- the hardware objects every screen here draws
 // to and reads touches from.
@@ -73,25 +74,29 @@ bool isTouchOnUndoButton() {
 }
 
 // ─── Menu screen ────────────────────────────────────────────────────────────
-// Covers the whole screen (board/buttons hidden) while inMenu is true. Three
-// independent live settings live here (PLAY WHITE/PLAY BLACK, DIFFICULTY --
-// each applies immediately, mid-game, no reset, via switchHumanColor()/
-// switchAiStrength() in cyd-chess.ino) plus NEW GAME, which just starts a
-// fresh game using whatever color/difficulty are *currently* set rather
-// than asking again -- color and level are each a standalone, always-live
-// choice, not tied to starting a new game.
-#define MENU_BTN_W          200
-#define MENU_BTN_H          45
-#define MENU_BTN_GAP        8
-#define MENU_BTN_X          ((240 - MENU_BTN_W) / 2)
-#define MENU_NEWGAME_BTN_Y  85
-#define MENU_WHITE_BTN_Y    (MENU_NEWGAME_BTN_Y + MENU_BTN_H + MENU_BTN_GAP)
-#define MENU_BLACK_BTN_Y    (MENU_WHITE_BTN_Y + MENU_BTN_H + MENU_BTN_GAP)
-#define MENU_DIFF_BTN_Y     (MENU_BLACK_BTN_Y + MENU_BTN_H + MENU_BTN_GAP)
+// Covers the whole screen (board/buttons hidden) while inMenu is true. Four
+// independent live settings live here (PLAY WHITE/PLAY BLACK, DIFFICULTY,
+// PIECE SET -- each applies immediately, mid-game, no reset, via
+// switchHumanColor()/switchAiStrength()/switchPieceSet() in cyd-chess.ino)
+// plus NEW GAME, which just starts a fresh game using whatever color/
+// difficulty/piece set are *currently* set rather than asking again -- each
+// is a standalone, always-live choice, not tied to starting a new game.
+// Button height/gap tightened (was 45/8, for 4 buttons) to fit 5 in the
+// 320px screen -- same squeeze PIECE SET's own addition needed here as
+// DIFFICULTY's did the first time.
+#define MENU_BTN_W           200
+#define MENU_BTN_H           38
+#define MENU_BTN_GAP         6
+#define MENU_BTN_X           ((240 - MENU_BTN_W) / 2)
+#define MENU_NEWGAME_BTN_Y   82
+#define MENU_WHITE_BTN_Y     (MENU_NEWGAME_BTN_Y + MENU_BTN_H + MENU_BTN_GAP)
+#define MENU_BLACK_BTN_Y     (MENU_WHITE_BTN_Y + MENU_BTN_H + MENU_BTN_GAP)
+#define MENU_DIFF_BTN_Y      (MENU_BLACK_BTN_Y + MENU_BTN_H + MENU_BTN_GAP)
+#define MENU_PIECESET_BTN_Y  (MENU_DIFF_BTN_Y + MENU_BTN_H + MENU_BTN_GAP)
 
 const char *STRENGTH_NAMES[4] = {"EASY", "MEDIUM", "HARD", "EXPERT"};
 
-void drawMenuScreen(int humanColor, int aiStrength) {
+void drawMenuScreen(int humanColor, int aiStrength, int pieceSet) {
   tft.fillScreen(COLOR_BG);
   tft.setTextSize(2);
   tft.setTextColor(TFT_YELLOW, COLOR_BG);
@@ -114,6 +119,10 @@ void drawMenuScreen(int humanColor, int aiStrength) {
                  "PLAY BLACK", COLOR_BLACK_P, TFT_WHITE, TFT_WHITE);
   drawTextButton(MENU_BTN_X, MENU_DIFF_BTN_Y, MENU_BTN_W, MENU_BTN_H,
                  "DIFFICULTY", TFT_NAVY, TFT_CYAN, TFT_WHITE);
+  char pieceSetLabel[24];
+  snprintf(pieceSetLabel, sizeof(pieceSetLabel), "PIECES: %s", PIECE_SET_NAMES[pieceSet]);
+  drawTextButton(MENU_BTN_X, MENU_PIECESET_BTN_Y, MENU_BTN_W, MENU_BTN_H,
+                 pieceSetLabel, TFT_PURPLE, TFT_MAGENTA, TFT_WHITE);
 }
 
 bool isTouchOnMenuNewGameButton() {
@@ -130,6 +139,10 @@ bool isTouchOnPlayBlackButton() {
 
 bool isTouchOnMenuDifficultyButton() {
   return isTouchInButton(MENU_BTN_X, MENU_DIFF_BTN_Y, MENU_BTN_W, MENU_BTN_H);
+}
+
+bool isTouchOnMenuPieceSetButton() {
+  return isTouchInButton(MENU_BTN_X, MENU_PIECESET_BTN_Y, MENU_BTN_W, MENU_BTN_H);
 }
 
 // ─── Difficulty screen (reached via MENU's DIFFICULTY button) ─────────────
@@ -163,6 +176,35 @@ void drawDifficultyMenu() {
 
 bool isTouchOnDifficultyButton(int idx) {
   return isTouchInButton(DIFF_BTN_X, DIFF_BTN_Y(idx), DIFF_BTN_W, DIFF_BTN_H);
+}
+
+// ─── Piece set screen (reached via MENU's PIECE SET button) ───────────────
+// Picking a set here applies immediately (switchPieceSet() in
+// cyd-chess.ino, same live-setting treatment as DIFFICULTY) -- it does not
+// start a new game. Named button per NUM_PIECE_SETS/PIECE_SET_NAMES
+// (pieces.h), so a third set later needs no layout change here.
+#define PIECESET_BTN_W    200
+#define PIECESET_BTN_H    45
+#define PIECESET_BTN_X    ((240 - PIECESET_BTN_W) / 2)
+#define PIECESET_BTN_GAP  10
+#define PIECESET_BTN_Y0   90
+#define PIECESET_BTN_Y(i) (PIECESET_BTN_Y0 + (i) * (PIECESET_BTN_H + PIECESET_BTN_GAP))
+
+void drawPieceSetMenu() {
+  tft.fillScreen(COLOR_BG);
+  tft.setTextSize(2);
+  tft.setTextColor(TFT_YELLOW, COLOR_BG);
+  tft.setCursor(30, 50);
+  tft.print("Piece Set");
+
+  for (int i = 0; i < NUM_PIECE_SETS; i++) {
+    drawTextButton(PIECESET_BTN_X, PIECESET_BTN_Y(i), PIECESET_BTN_W, PIECESET_BTN_H,
+                   PIECE_SET_NAMES[i], TFT_PURPLE, TFT_MAGENTA, TFT_WHITE);
+  }
+}
+
+bool isTouchOnPieceSetButton(int idx) {
+  return isTouchInButton(PIECESET_BTN_X, PIECESET_BTN_Y(idx), PIECESET_BTN_W, PIECESET_BTN_H);
 }
 
 // ─── Promotion choice ───────────────────────────────────────────────────────

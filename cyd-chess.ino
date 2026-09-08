@@ -408,6 +408,11 @@ void switchHumanColor(int newColor) {
   selectedRow = -1;
   selectedCol = -1;
   legalMoveCount = 0;
+  // Defensive, not currently reachable -- loop()'s awaitingPromotion check
+  // already blocks every other path (including this one) until a pending
+  // promotion is resolved. Cleared anyway so this stays true even if that
+  // ordering ever changes.
+  awaitingPromotion = false;
   tft.fillScreen(COLOR_BG);
   drawBoard(gs); // re-renders flipped/unflipped per the new boardFlipped()
   drawMenuButton();
@@ -429,6 +434,9 @@ void resetGame() {
   selectedCol = -1;
   legalMoveCount = 0;
   gameOver = false;
+  // Defensive, not currently reachable -- see the matching comment in
+  // switchHumanColor().
+  awaitingPromotion = false;
   tft.fillScreen(COLOR_BG);
   drawBoard(gs);
   drawMenuButton();

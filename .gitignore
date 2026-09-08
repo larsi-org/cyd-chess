@@ -1,0 +1,11 @@
+# Arduino build artifacts, if arduino-cli's --build-path is ever pointed
+# inside the repo instead of its default cache location
+build/
+*.bin
+*.elf
+*.map
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store

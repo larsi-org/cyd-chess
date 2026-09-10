@@ -78,9 +78,14 @@ XPT2046_Touchscreen touch(TOUCH_CS_PIN, TOUCH_IRQ_PIN);
 
 // Layout, top to bottom: board (y=0..240), file/rank coordinate labels
 // (y=242..250ish), status line, then the Menu/Undo button row (unchanged
-// at the very bottom -- see menu.cpp's BTN_Y comment).
-#define STATUS_Y 252
-#define STATUS_H 38
+// at the very bottom -- see menu.cpp's BTN_Y comment). Every drawStatus()
+// call is a single short line (never wraps), so the box only needs to be
+// tall enough for that one line -- 38px was sized back when this was a
+// standalone bar at the very top of the screen; sandwiched between the
+// board and the buttons now, that height left a lot of visibly empty
+// status-colored space below the text.
+#define STATUS_Y 260
+#define STATUS_H 16
 
 // TFT Colors
 // Light/dark square colors match WinBoard/XBoard's own classic default
@@ -368,16 +373,32 @@ void drawBoard(GameState &gs) {
   // Draw coordinates -- i is a *screen* position (0-7, left-to-right /
   // top-to-bottom); the board file/rank actually shown there depends on
   // boardFlipped(), same transform as boardToScreenXY() but run in reverse.
+  //
+  // File letters sit in the dedicated strip below the board (on the plain
+  // black background there, so a bright color reads cleanly).
   tft.setTextSize(1);
-  tft.setTextColor(TFT_YELLOW, COLOR_BG);
+  tft.setTextColor(TFT_WHITE, COLOR_BG);
   for (int i = 0; i < 8; i++) {
     int boardCol = boardFlipped() ? 7 - i : i;
     tft.setCursor(BOARD_OFFSET_X + i * SQUARE_SIZE + 12, BOARD_OFFSET_Y + 8 * SQUARE_SIZE + 2);
     tft.print((char)('a' + boardCol));
   }
+
+  // Rank numbers have no equivalent margin to draw in -- the board already
+  // fills the screen's full 240px width, so they're drawn overlaid in the
+  // bottom-left corner of column 0's squares instead (standard chess
+  // convention puts rank numbers on the left edge anyway). Ink color is
+  // chosen per-square, since one fixed color can't read well against both
+  // the light and dark square colors; background matches the square color
+  // itself so the label blends in rather than sitting in a mismatched box.
+  // (Screen row i, column 0's square is light exactly when i is even --
+  // true regardless of boardFlipped(), since flipping negates both row and
+  // col together and 8 is even.)
   for (int i = 0; i < 8; i++) {
     int boardRow = boardFlipped() ? 7 - i : i;
-    tft.setCursor(BOARD_OFFSET_X + 8 * SQUARE_SIZE + 2, BOARD_OFFSET_Y + i * SQUARE_SIZE + 10);
+    bool sqIsLight = (i % 2 == 0);
+    tft.setTextColor(sqIsLight ? TFT_BLACK : TFT_WHITE, sqIsLight ? COLOR_LIGHT_SQ : COLOR_DARK_SQ);
+    tft.setCursor(BOARD_OFFSET_X + 2, BOARD_OFFSET_Y + i * SQUARE_SIZE + SQUARE_SIZE - 9);
     tft.print(8 - boardRow);
   }
 }

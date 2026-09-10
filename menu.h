@@ -18,8 +18,7 @@ bool isTouchOnUndoButton();
 
 void drawMenuScreen(int humanColor, int aiStrength, int pieceSet);
 bool isTouchOnMenuNewGameButton();
-bool isTouchOnPlayWhiteButton();
-bool isTouchOnPlayBlackButton();
+bool isTouchOnMenuColorButton();
 bool isTouchOnMenuDifficultyButton();
 bool isTouchOnMenuPieceSetButton();
 

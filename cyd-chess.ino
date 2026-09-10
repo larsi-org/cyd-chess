@@ -591,9 +591,9 @@ void loop() {
 
   // Menu screen: covers the whole screen, so it's checked before (and
   // instead of) the Menu/Undo buttons below, which aren't visible right now.
-  // PLAY WHITE/BLACK and DIFFICULTY all apply immediately (no board reset,
-  // work mid-game); NEW GAME starts a fresh game using whatever color/
-  // difficulty are currently set, rather than asking again.
+  // The color toggle and DIFFICULTY/PIECE SET all apply immediately (no
+  // board reset, work mid-game); NEW GAME starts a fresh game using whatever
+  // color/difficulty/piece set are currently set, rather than asking again.
   if (inMenu) {
     if (isTouchOnMenuNewGameButton()) {
       delay(50); // debounce
@@ -605,23 +605,13 @@ void loop() {
       }
       return;
     }
-    if (isTouchOnPlayWhiteButton()) {
+    if (isTouchOnMenuColorButton()) {
       delay(50); // debounce
-      if (isTouchOnPlayWhiteButton()) {
+      if (isTouchOnMenuColorButton()) {
         unsigned long _waitStart = millis();
         while (touch.touched() && millis() - _waitStart < 2000) { delay(10); }
         inMenu = false;
-        switchHumanColor(WHITE_PIECE);
-      }
-      return;
-    }
-    if (isTouchOnPlayBlackButton()) {
-      delay(50); // debounce
-      if (isTouchOnPlayBlackButton()) {
-        unsigned long _waitStart = millis();
-        while (touch.touched() && millis() - _waitStart < 2000) { delay(10); }
-        inMenu = false;
-        switchHumanColor(BLACK_PIECE);
+        switchHumanColor(humanColor == WHITE_PIECE ? BLACK_PIECE : WHITE_PIECE);
       }
       return;
     }

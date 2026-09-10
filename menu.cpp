@@ -74,24 +74,23 @@ bool isTouchOnUndoButton() {
 }
 
 // ─── Menu screen ────────────────────────────────────────────────────────────
-// Covers the whole screen (board/buttons hidden) while inMenu is true. Four
-// independent live settings live here (PLAY WHITE/PLAY BLACK, DIFFICULTY,
-// PIECE SET -- each applies immediately, mid-game, no reset, via
-// switchHumanColor()/switchAiStrength()/switchPieceSet() in cyd-chess.ino)
-// plus NEW GAME, which just starts a fresh game using whatever color/
-// difficulty/piece set are *currently* set rather than asking again -- each
-// is a standalone, always-live choice, not tied to starting a new game.
-// Button height/gap tightened (was 45/8, for 4 buttons) to fit 5 in the
-// 320px screen -- same squeeze PIECE SET's own addition needed here as
-// DIFFICULTY's did the first time.
+// Covers the whole screen (board/buttons hidden) while inMenu is true. Three
+// independent live settings live here (COLOR, DIFFICULTY, PIECE SET -- each
+// applies immediately, mid-game, no reset, via switchHumanColor()/
+// switchAiStrength()/switchPieceSet() in cyd-chess.ino) plus NEW GAME, which
+// just starts a fresh game using whatever color/difficulty/piece set are
+// *currently* set rather than asking again -- each is a standalone,
+// always-live choice, not tied to starting a new game. Every button prints
+// its own current value (was a separate "Now playing: ..." caption above the
+// buttons before COLOR became one button instead of two) so there's exactly
+// one place to look for each setting.
 #define MENU_BTN_W           200
-#define MENU_BTN_H           38
-#define MENU_BTN_GAP         6
+#define MENU_BTN_H           45
+#define MENU_BTN_GAP         8
 #define MENU_BTN_X           ((240 - MENU_BTN_W) / 2)
-#define MENU_NEWGAME_BTN_Y   82
-#define MENU_WHITE_BTN_Y     (MENU_NEWGAME_BTN_Y + MENU_BTN_H + MENU_BTN_GAP)
-#define MENU_BLACK_BTN_Y     (MENU_WHITE_BTN_Y + MENU_BTN_H + MENU_BTN_GAP)
-#define MENU_DIFF_BTN_Y      (MENU_BLACK_BTN_Y + MENU_BTN_H + MENU_BTN_GAP)
+#define MENU_NEWGAME_BTN_Y   60
+#define MENU_COLOR_BTN_Y     (MENU_NEWGAME_BTN_Y + MENU_BTN_H + MENU_BTN_GAP)
+#define MENU_DIFF_BTN_Y      (MENU_COLOR_BTN_Y + MENU_BTN_H + MENU_BTN_GAP)
 #define MENU_PIECESET_BTN_Y  (MENU_DIFF_BTN_Y + MENU_BTN_H + MENU_BTN_GAP)
 
 const char *STRENGTH_NAMES[4] = {"EASY", "MEDIUM", "HARD", "EXPERT"};
@@ -103,22 +102,26 @@ void drawMenuScreen(int humanColor, int aiStrength, int pieceSet) {
   tft.setCursor(60, 28);
   tft.print("Menu");
 
-  tft.setTextSize(1);
-  tft.setTextColor(TFT_WHITE, COLOR_BG);
-  char caption[40];
-  snprintf(caption, sizeof(caption), "Now playing: %s, %s",
-           humanColor == WHITE_PIECE ? "White" : "Black", STRENGTH_NAMES[aiStrength]);
-  tft.setCursor((240 - (int)strlen(caption) * 6) / 2, 58);
-  tft.print(caption);
-
   drawTextButton(MENU_BTN_X, MENU_NEWGAME_BTN_Y, MENU_BTN_W, MENU_BTN_H,
                  "NEW GAME", TFT_DARKGREEN, TFT_GREEN);
-  drawTextButton(MENU_BTN_X, MENU_WHITE_BTN_Y, MENU_BTN_W, MENU_BTN_H,
-                 "PLAY WHITE", COLOR_WHITE_P, TFT_BLACK, TFT_BLACK);
-  drawTextButton(MENU_BTN_X, MENU_BLACK_BTN_Y, MENU_BTN_W, MENU_BTN_H,
-                 "PLAY BLACK", COLOR_BLACK_P, TFT_WHITE, TFT_WHITE);
+
+  // A toggle, not a submenu -- only two values, so tapping it flips straight
+  // to the other color (cyd-chess.ino's loop()) rather than opening a
+  // separate picker screen the way DIFFICULTY/PIECE SET do. Button colors
+  // themselves flip with the value (white-on-black text on a white button
+  // when playing White, the reverse when playing Black), the same visual
+  // identity the old separate PLAY WHITE/PLAY BLACK buttons each had.
+  char colorLabel[16];
+  snprintf(colorLabel, sizeof(colorLabel), "PLAYER: %s", humanColor == WHITE_PIECE ? "WHITE" : "BLACK");
+  uint16_t colorFill = (humanColor == WHITE_PIECE) ? COLOR_WHITE_P : COLOR_BLACK_P;
+  uint16_t colorInk  = (humanColor == WHITE_PIECE) ? TFT_BLACK : TFT_WHITE;
+  drawTextButton(MENU_BTN_X, MENU_COLOR_BTN_Y, MENU_BTN_W, MENU_BTN_H,
+                 colorLabel, colorFill, colorInk, colorInk);
+
+  char diffLabel[24];
+  snprintf(diffLabel, sizeof(diffLabel), "DIFFICULTY: %s", STRENGTH_NAMES[aiStrength]);
   drawTextButton(MENU_BTN_X, MENU_DIFF_BTN_Y, MENU_BTN_W, MENU_BTN_H,
-                 "DIFFICULTY", TFT_NAVY, TFT_CYAN, TFT_WHITE);
+                 diffLabel, TFT_NAVY, TFT_CYAN, TFT_WHITE);
   char pieceSetLabel[24];
   snprintf(pieceSetLabel, sizeof(pieceSetLabel), "PIECES: %s", PIECE_SET_NAMES[pieceSet]);
   drawTextButton(MENU_BTN_X, MENU_PIECESET_BTN_Y, MENU_BTN_W, MENU_BTN_H,
@@ -129,12 +132,8 @@ bool isTouchOnMenuNewGameButton() {
   return isTouchInButton(MENU_BTN_X, MENU_NEWGAME_BTN_Y, MENU_BTN_W, MENU_BTN_H);
 }
 
-bool isTouchOnPlayWhiteButton() {
-  return isTouchInButton(MENU_BTN_X, MENU_WHITE_BTN_Y, MENU_BTN_W, MENU_BTN_H);
-}
-
-bool isTouchOnPlayBlackButton() {
-  return isTouchInButton(MENU_BTN_X, MENU_BLACK_BTN_Y, MENU_BTN_W, MENU_BTN_H);
+bool isTouchOnMenuColorButton() {
+  return isTouchInButton(MENU_BTN_X, MENU_COLOR_BTN_Y, MENU_BTN_W, MENU_BTN_H);
 }
 
 bool isTouchOnMenuDifficultyButton() {

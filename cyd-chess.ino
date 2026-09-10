@@ -74,7 +74,13 @@ XPT2046_Touchscreen touch(TOUCH_CS_PIN, TOUCH_IRQ_PIN);
 // come from chess_rules.h.
 #define SQUARE_SIZE   30
 #define BOARD_OFFSET_X 0
-#define BOARD_OFFSET_Y 40
+#define BOARD_OFFSET_Y 0
+
+// Layout, top to bottom: board (y=0..240), file/rank coordinate labels
+// (y=242..250ish), status line, then the Menu/Undo button row (unchanged
+// at the very bottom -- see menu.cpp's BTN_Y comment).
+#define STATUS_Y 252
+#define STATUS_H 38
 
 // TFT Colors
 // Light/dark square colors match WinBoard/XBoard's own classic default
@@ -146,10 +152,10 @@ bool boardFlipped() {
 
 // ─── Drawing Functions ─────────────────────────────────────────────────────
 void drawStatus(const char *msg) {
-  tft.fillRect(0, 0, 240, 38, COLOR_STATUS_BG);
+  tft.fillRect(0, STATUS_Y, 240, STATUS_H, COLOR_STATUS_BG);
   tft.setTextColor(COLOR_TEXT, COLOR_STATUS_BG);
   tft.setTextSize(1);
-  tft.setCursor(4, 4);
+  tft.setCursor(4, STATUS_Y + 4);
   tft.print(msg);
 }
 

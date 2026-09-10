@@ -44,9 +44,9 @@ bool isTouchInButton(int x, int y, int w, int h) {
 }
 
 // Undo / Menu buttons — bottom of screen, below the chess board.
-// 240×320 portrait: board occupies y=40..280; column labels at y=282..290;
-// buttons get the remaining strip y=294..318, split into two side by side
-// (5px margins, 10px gap: 5+110+10+110+5 = 240).
+// 240×320 portrait: board occupies y=0..240; column labels at y=242..250;
+// status line at y=252..290; buttons get the remaining strip y=294..318,
+// split into two side by side (5px margins, 10px gap: 5+110+10+110+5 = 240).
 #define UNDO_BTN_X        5
 #define MENU_BOTTOM_BTN_X 125
 #define BTN_Y             294

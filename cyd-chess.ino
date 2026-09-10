@@ -52,6 +52,12 @@ size_t getArduinoLoopTaskStackSize() {
 #define TOUCH_MISO    39
 #define TOUCH_SCK     25
 
+// Onboard RGB status LED -- unused by this sketch, but left floating it reads as a dim glow
+// (active-low, so an undriven pin partially conducts) rather than fully off.
+#define LED_R_PIN 4
+#define LED_G_PIN 16
+#define LED_B_PIN 17
+
 // ─── Display & Touch Objects ───────────────────────────────────────────────
 
 // Forward declarations (chess rules themselves are declared by
@@ -529,6 +535,13 @@ void setup() {
   // Backlight
   ledcAttach(TFT_BL_PIN, 5000, 8);
   ledcWrite(TFT_BL_PIN, 200);
+
+  pinMode(LED_R_PIN, OUTPUT);
+  pinMode(LED_G_PIN, OUTPUT);
+  pinMode(LED_B_PIN, OUTPUT);
+  digitalWrite(LED_R_PIN, HIGH);
+  digitalWrite(LED_G_PIN, HIGH);
+  digitalWrite(LED_B_PIN, HIGH);
 
   // TFT
   tft.init();

@@ -37,6 +37,11 @@ void invalidateUndoSnapshot() {
 }
 
 void saveUndoSnapshot(GameState &g) {
+  // Not just a latency nicety here -- mmB/etc. are read directly below, without going through
+  // any of micromax.cpp's own three guarded entry points, so this is the one thing standing
+  // between a still-running background eval (see micromax.h) and a torn read of a board it's
+  // mid-search on.
+  microMaxSyncBackgroundEval();
   undoSnapshot.valid = true;
   undoSnapshot.gs = g; // halfmoveClock rides along inside GameState for free
   memcpy(undoSnapshot.mmB, mmB, sizeof(mmB));
@@ -51,6 +56,10 @@ void saveUndoSnapshot(GameState &g) {
 
 bool restoreUndoSnapshot(GameState &g) {
   if (!undoSnapshot.valid) return false;
+  // Same reasoning as saveUndoSnapshot() above, and more likely to actually matter here: Undo is
+  // typically tapped during the human's turn, right when the move-rating background eval for
+  // the position they're now undoing is most likely still running.
+  microMaxSyncBackgroundEval();
   g = undoSnapshot.gs;
   memcpy(mmB, undoSnapshot.mmB, sizeof(mmB));
   mmJ = undoSnapshot.mmJ; mmZ = undoSnapshot.mmZ; mmk = undoSnapshot.mmk;

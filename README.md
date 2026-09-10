@@ -3,8 +3,8 @@
 A touchscreen chess game for the ESP32-2432S028R "Cheap Yellow Display," started from
 [Schematik's guide](https://www.schematik.io/guides/esp32/build-a-touchscreen-chess-game-on-a-cheap-yellow-display)
 and substantially rebuilt: a real chess engine, a small opening book, full move and draw rules, a
-menu for color/difficulty/piece set/new game, pawn promotion, single-level undo, and persistence
-across a power cycle.
+menu for color/difficulty/piece set/new game, pawn promotion, single-level undo, persistence
+across a power cycle, and a rough good/OK/inaccurate rating of each of your own moves.
 
 **Full write-up:** https://larsi.org/make/cyd-chess/
 
@@ -30,7 +30,7 @@ arduino-cli upload -p /dev/ttyUSB0 --fqbn esp32:esp32:esp32 .
 |---|---|
 | `cyd-chess.ino` | `setup()`/`loop()`, touch handling, board rendering, and the game-lifecycle glue (`resetGame()`, `switchHumanColor()`, `switchAiStrength()`, `completeHumanMove()`/`endGame()`) that ties every other file together. |
 | `chess_rules.h`/`.cpp` | The authoritative rules: board/move representation, move generation (castling/en passant/promotion), check/checkmate/stalemate, and draw detection (repetition, 50-move rule, insufficient material). Zero display or touch dependency. |
-| `micromax.h`/`.cpp` | [H.G. Muller's micro-Max 4.8](https://home.hccnet.nl/h.g.muller/umax4_8.c) engine, vendored near-verbatim. Used only to propose move candidates -- every move it suggests is cross-checked against `chess_rules.cpp`'s own legal-move list before being trusted. |
+| `micromax.h`/`.cpp` | [H.G. Muller's micro-Max 4.8](https://home.hccnet.nl/h.g.muller/umax4_8.c) engine, vendored near-verbatim. Used only to propose move candidates -- every move it suggests is cross-checked against `chess_rules.cpp`'s own legal-move list before being trusted. Also runs a second, speculative search on the ESP32's otherwise-idle second core the moment it becomes your turn, scoring what the engine itself would have played -- compared against its actual reply search once you've moved, to rate your move. |
 | `book.h`/`.cpp` | A 14-line opening book (from [lichess-org/chess-openings](https://github.com/lichess-org/chess-openings), CC0), checked before the engine searches. |
 | `pieces.h` | Three selectable piece bitmap sets (MENU's PIECE SET option) -- Classic, converted from the "SmallPng" set in [samboy/ChessGraphics](https://github.com/samboy/ChessGraphics) (public domain); Pixel and Playful, both cropped from Brianna Cason's ("hanahoa") ["Chess and Checkers"](https://hanahoa.itch.io/chess-and-checkers) itch.io asset (CC BY 4.0) -- just the bitmap tables, no drawing logic. |
 | `menu.h`/`.cpp` | The MENU/difficulty/promotion screens: drawing and touch-hit-testing only. |

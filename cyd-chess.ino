@@ -146,6 +146,16 @@ bool inPieceSetMenu = false;
 bool awaitingPromotion = false;
 Move pendingPromotionMove;
 
+// Move-rating: bestScore captured (from microMaxConsumeBackgroundEval()) the
+// moment the human's move is committed -- what micro-Max itself would have
+// scored the best move from that same position. Compared against the AI's
+// own reply-search score once one exists (see haveReplyScore in the AI-turn
+// branch) to show a rough good/OK/inaccurate toast. Cleared on anything that
+// makes the pending rating stale before that comparison happens -- a new
+// game, a side switch, or an undo.
+int pendingMoveRatingBestScore = 0;
+bool havePendingMoveRating = false;
+
 // True when the human picked Black -- the board is drawn (and touch input
 // read) rotated 180 so the human's own pieces are nearest the bottom,
 // matching how a real board looks from either side of the table. Computed
@@ -172,15 +182,34 @@ void drawStatus(const char *msg) {
 
 // Collapses every "Your turn (White)"/"Your turn (Black)"/"AI thinking..."
 // site into one place -- correct regardless of which color is human since
-// it re-checks gs.currentPlayer/humanColor fresh each call.
+// it re-checks gs.currentPlayer/humanColor fresh each call. Also the one
+// place that starts the move-rating background eval (see its own comment in
+// micromax.h) -- every "it's now the human's turn" transition in this sketch
+// (a fresh game, an undo, a side switch, or the AI's own move completing)
+// already funnels through here, so this is the only trigger point needed.
 void showTurnStatus() {
   if (gs.currentPlayer == humanColor) {
     char buf[32];
     snprintf(buf, sizeof(buf), "Your turn (%s)", humanColor == WHITE_PIECE ? "White" : "Black");
     drawStatus(buf);
+    microMaxStartBackgroundEval();
   } else {
     drawStatus("AI thinking...");
   }
+}
+
+// Rough good/OK/inaccurate bucketing for a move-rating "loss" -- the gap
+// between what micro-Max's own search would have scored as the best move
+// from a position, and what the human's actual move left it scored at (see
+// the AI-turn branch's use of this). Units are micro-Max's own internal
+// score scale (see mmW[]'s piece-value comment in micromax.cpp -- roughly
+// single digits per pawn up to the low 20s for a queen, not centipawns), and
+// these cutoffs are a first rough guess, not calibrated against real games
+// -- easy to retune here once played with.
+const char *rateMoveLoss(int loss) {
+  if (loss <= 2) return "Good move!";
+  if (loss <= 8) return "OK move";
+  return "Not the best";
 }
 
 // Remembered so a later redraw (e.g. returning from the MENU after switching
@@ -276,6 +305,7 @@ void switchHumanColor(int newColor) {
   // No coherent "my last move" survives a side-swap -- it may have been
   // made by a different color's human -- so don't offer to undo across one.
   invalidateUndoSnapshot();
+  havePendingMoveRating = false; // same reasoning -- stale, refers to the old color's move
   pieceSelected = false;
   selectedRow = -1;
   selectedCol = -1;
@@ -335,6 +365,7 @@ void resetGame() {
   resetPositionHistory();
   recordPosition(gs); // the starting position itself counts as its own first occurrence
   invalidateUndoSnapshot();
+  havePendingMoveRating = false; // stale -- refers to a move from the previous game
   pieceSelected = false;
   selectedRow = -1;
   selectedCol = -1;
@@ -500,6 +531,11 @@ void endGame(const char *statusMsg, const char *bannerMsg) {
 // the promotion-choice resume path in loop(), so the save-undo/apply/sync/
 // redraw/game-end-check sequence lives in exactly one place.
 void completeHumanMove(Move &m) {
+  // Consume whatever the background eval (started the moment this turn began -- see
+  // showTurnStatus()) found for this position, before anything below changes it. Blocks only if
+  // the human moved faster than the search finished.
+  havePendingMoveRating = microMaxConsumeBackgroundEval(pendingMoveRatingBestScore);
+
   saveUndoSnapshot(gs); // captures the position as it stood right before this move
   applyMove(gs, m);
   recordPosition(gs);
@@ -743,6 +779,7 @@ void loop() {
       while (touch.touched() && millis() - _waitStart < 2000) { delay(10); }
       if (restoreUndoSnapshot(gs)) {
         gameOver = false;
+        havePendingMoveRating = false; // stale -- refers to the just-undone move
         pieceSelected = false;
         selectedRow = -1;
         selectedCol = -1;
@@ -894,6 +931,12 @@ void loop() {
     Move best = allMoves[0]; // emergency fallback if no match is ever found
     bool found = false;
     bool aiFallbackUsed = false; // surfaced on-screen below, not just to Serial
+    // Only the real micro-Max search below produces a score -- a book or
+    // blunder-difficulty move never runs one, so there's nothing to rate the
+    // human's preceding move against on those turns. See the rating toast
+    // near the end of this branch.
+    int replyScore = 0;
+    bool haveReplyScore = false;
 
     int bkFromRow, bkFromCol, bkToRow, bkToCol;
     bool fromBook = bookGetMove(bkFromRow, bkFromCol, bkToRow, bkToCol);
@@ -935,7 +978,8 @@ void loop() {
         microMaxApplyMove(best.fromRow, best.fromCol, best.toRow, best.toCol);
       } else {
         int mmFromRow, mmFromCol, mmToRow, mmToCol;
-        microMaxGetBestMove(mmFromRow, mmFromCol, mmToRow, mmToCol);
+        microMaxGetBestMove(mmFromRow, mmFromCol, mmToRow, mmToCol, &replyScore);
+        haveReplyScore = true;
         for (int i = 0; i < allCount; i++) {
           if (allMoves[i].fromRow == mmFromRow && allMoves[i].fromCol == mmFromCol &&
               allMoves[i].toRow == mmToRow && allMoves[i].toCol == mmToCol) {
@@ -959,6 +1003,19 @@ void loop() {
     savePersistedGame(gs);
 
     drawBoard(gs);
+
+    // Rate the human's just-finished move against this reply search's own score, now that one
+    // exists (see haveReplyScore's comment above -- a book or blunder-difficulty AI move never
+    // runs a real search, so there's nothing to rate against on those turns).
+    if (havePendingMoveRating) {
+      if (haveReplyScore) {
+        int actualScoreForHuman = -replyScore; // negamax: reply score is from the AI's side
+        int loss = pendingMoveRatingBestScore - actualScoreForHuman;
+        drawStatus(rateMoveLoss(loss));
+        delay(900);
+      }
+      havePendingMoveRating = false;
+    }
 
     // Should never actually trigger -- both the book and micro-Max have been
     // tested extensively (200-move self-play, 2000-trial book sampling, all

@@ -63,6 +63,10 @@
 //    microMaxInit()/microMaxApplyMove()/microMaxGetBestMove() below instead)
 //    -- an Arduino sketch supplies its own main(), so keeping Muller's would
 //    have been a straight link conflict, not just unwanted code.
+//  - A background move-rating eval (mmEvalTask and friends, below) added
+//    alongside microMaxGetBestMove() -- runs the same root search on a
+//    second core to score how good the human's about-to-be-made move was,
+//    without touching the vendored search itself. See its own comment.
 
 #define W while // Muller's, #undef'd right after microMaxInit() below to limit its reach
 #define MM_U (1 << 12) // hash table size, must stay a power of 2 (see U-1 mask below)
@@ -100,6 +104,83 @@ mmB[129],                                        /* board: half of 16x8+dummy*/
 mmT[1035] __attribute__((aligned(4)));           /* hash translation table   */
 
 int mmLastX, mmLastY; // [cyd-chess addition] last committed move's squares
+
+// [cyd-chess addition] forward declaration -- mmD() itself isn't defined until below, but the
+// background eval task wrapping it (right below) needs to call it too.
+int mmD(int q, int l, int e, int E, int z, int n);
+
+// [cyd-chess addition] Background move-rating eval -- see microMaxStartBackgroundEval()'s
+// comment in micromax.h for the feature this supports. Runs mmD()'s exact root search (same
+// call microMaxGetBestMove() below makes) on a task pinned to core 0, which this sketch
+// otherwise leaves completely idle (no WiFi, no other tasks), so it overlaps the human's think
+// time instead of adding a pause after they move. mmD()'s root call commits its chosen line
+// onto mmB as a side effect of finding it (see microMaxGetBestMove()'s own comment) -- fine when
+// that line IS the move about to be played, not here, so this snapshots mmB/mmJ/mmZ/mmk/mmR/mmQ/
+// mmO (the same fields cyd-chess.ino's own undo snapshot saves, for the same reason: it's
+// everything that has to travel together to keep micro-Max in lockstep) before searching and
+// restores them after, leaving the real game untouched. The hash table (mmA) is deliberately
+// *not* saved/restored -- leftover entries from a position that was actually reached only helps
+// (a warm cache), the same reasoning already documented on MM_U above for hash collisions never
+// being a correctness issue, only a move-ordering one.
+//
+// Plain volatile flags, no mutex: ESP32's two cores access internal SRAM (where these globals
+// live) directly rather than through a per-core cache, so there's no coherency gap to paper
+// over -- only one side ever writes a given field at a time (main sets IDLE->RUNNING, the task
+// sets RUNNING->READY then deletes itself, main reads/resets READY->IDLE), so plain volatile is
+// enough to stop the compiler from reordering or caching a stale value across the boundary.
+enum { MM_EVAL_IDLE, MM_EVAL_RUNNING, MM_EVAL_READY };
+static volatile int mmEvalState = MM_EVAL_IDLE;
+static volatile int mmEvalScore = 0;
+
+static void mmEvalTask(void *) {
+  signed char savedB[129];
+  memcpy(savedB, mmB, sizeof(mmB));
+  int savedJ = mmJ, savedZ = mmZ, savedk = mmk, savedR = mmR, savedQ = mmQ, savedO = mmO;
+
+  mmN = 0;
+  mmK = mmI;
+  int score = mmD(-mmI, mmI, mmQ, mmO, 1, 3);
+
+  memcpy(mmB, savedB, sizeof(mmB));
+  mmJ = savedJ; mmZ = savedZ; mmk = savedk; mmR = savedR; mmQ = savedQ; mmO = savedO;
+
+  mmEvalScore = score;
+  mmEvalState = MM_EVAL_READY;
+  vTaskDelete(nullptr);
+}
+
+void microMaxStartBackgroundEval() {
+  if (mmEvalState != MM_EVAL_IDLE) return; // already covers the current position
+  mmEvalState = MM_EVAL_RUNNING;
+  // Same 64KB cyd-chess.ino gives the main loopTask -- mmD()'s recursion
+  // needs it just as much running here.
+  xTaskCreatePinnedToCore(mmEvalTask, "mmEval", 64 * 1024, nullptr, 1, nullptr, 0);
+}
+
+bool microMaxBackgroundEvalReady() {
+  return mmEvalState == MM_EVAL_READY;
+}
+
+bool microMaxConsumeBackgroundEval(int &outScore) {
+  if (mmEvalState == MM_EVAL_IDLE) return false; // never started
+  while (mmEvalState == MM_EVAL_RUNNING) vTaskDelay(1);
+  outScore = mmEvalScore;
+  mmEvalState = MM_EVAL_IDLE;
+  return true;
+}
+
+// [cyd-chess addition] Must run before anything touches mm*'s state (mmB, the hash table, etc.)
+// -- guards against the exceedingly narrow but real race of a background eval (above) still
+// running when the game state it's evaluating is about to change out from under it (e.g. a fast
+// MENU -> New Game tap, or Undo, right after the human's own move started a fresh eval).
+// microMaxInit()/microMaxApplyMove()/microMaxGetBestMove() below all call this themselves;
+// undo.cpp's direct mmB/etc. access (it isn't routed through any of those three) calls the
+// public microMaxSyncBackgroundEval() wrapper instead. A no-op in the far more common case of no
+// eval in flight.
+void microMaxSyncBackgroundEval() {
+  while (mmEvalState == MM_EVAL_RUNNING) vTaskDelay(1);
+  mmEvalState = MM_EVAL_IDLE; // discard -- whoever's about to mutate state didn't ask for this
+}
 
 #define MM_K(A,B) *(int*)(mmT+A+(B&8)+mmS*(B&7))
 #define MM_J(A) MM_K(y+A,mmB[y])-MM_K(x+A,u)-MM_K(H+A,t)
@@ -207,6 +288,7 @@ C:if(m>mmI-mmM|m<mmM-mmI)d=98;                       /* mate holds to any depth 
 }
 
 void microMaxInit() {
+ microMaxSyncBackgroundEval();           // [cyd-chess addition] see its own comment above
  memset(mmA, 0, sizeof(mmA));      // [cyd-chess addition] clear hash between games
  // [cyd-chess addition] Muller's own setup loop below only ever explicitly
  // writes the back ranks/pawn ranks (rows 0,1,6,7) -- it relies on the rest
@@ -230,6 +312,7 @@ void microMaxInit() {
 #undef W // limit this generic-named macro to just the vendored block above
 
 void microMaxApplyMove(int fromRow, int fromCol, int toRow, int toCol) {
+ microMaxSyncBackgroundEval(); // [cyd-chess addition] see its own comment above
  mmK = fromRow * 16 + fromCol;
  mmL = toRow * 16 + toCol;
  mmD(-mmI, mmI, mmQ, mmO, 1, 3);
@@ -240,7 +323,8 @@ void microMaxApplyMove(int fromRow, int fromCol, int toRow, int toCol) {
 // above), then reports the from/to squares of whatever it just committed
 // to its own board. Caller is expected to cross-check this against its own
 // legal-move list before trusting it (this sketch's loop() does).
-void microMaxGetBestMove(int &fromRow, int &fromCol, int &toRow, int &toCol) {
+void microMaxGetBestMove(int &fromRow, int &fromCol, int &toRow, int &toCol, int *outScore) {
+ microMaxSyncBackgroundEval(); // [cyd-chess addition] see its own comment above
  // [cyd-chess fix] mmN (the root deepening loop's node counter, checked
  // against MM_NODE_BUDGET) is never reset by Muller's own code -- it only
  // resets once per NEW GAME, in microMaxInit(). Left alone, the first move
@@ -253,7 +337,8 @@ void microMaxGetBestMove(int &fromRow, int &fromCol, int &toRow, int &toCol) {
  // wrong.) Reset here so every move gets the real search budget.
  mmN = 0;
  mmK = mmI;
- mmD(-mmI, mmI, mmQ, mmO, 1, 3);
+ int score = mmD(-mmI, mmI, mmQ, mmO, 1, 3);
+ if (outScore) *outScore = score;
  fromRow = mmLastX / 16; fromCol = mmLastX & 7;
  toRow = mmLastY / 16;   toCol = mmLastY & 7;   // &7 also drops mmLastY's S/double-move flag bit
 }

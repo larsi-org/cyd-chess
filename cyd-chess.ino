@@ -191,6 +191,24 @@ void drawStatus(const char *msg) {
   tft.print(msg);
 }
 
+// Move-rating's own line, directly below the main status line -- kept separate so a rating isn't
+// sharing a line drawStatus() is about to overwrite with "Your turn"/"AI thinking" right after it
+// (it used to, and did). Persists until the next rating replaces it or something clears it (New
+// Game, a side switch, or an undo -- see those call sites) rather than on a timer, so there's no
+// need to block the game loop with a delay just to give it time to be read. RATING_Y/_H reuse
+// STATUS_Y/_H's own sizing one line down; the resulting 2px gap above BTN_Y (294) is deliberate,
+// not a rounding accident.
+#define RATING_Y (STATUS_Y + STATUS_H)
+#define RATING_H STATUS_H
+
+void drawRatingLine(const char *msg) {
+  tft.fillRect(0, RATING_Y, 240, RATING_H, COLOR_STATUS_BG);
+  tft.setTextColor(COLOR_TEXT, COLOR_STATUS_BG);
+  tft.setTextSize(1);
+  tft.setCursor(4, RATING_Y + 4);
+  tft.print(msg);
+}
+
 // Collapses every "Your turn (White)"/"Your turn (Black)"/"AI thinking..."
 // site into one place -- correct regardless of which color is human since
 // it re-checks gs.currentPlayer/humanColor fresh each call. Also the one
@@ -794,6 +812,9 @@ void loop() {
       if (restoreUndoSnapshot(gs)) {
         gameOver = false;
         havePendingMoveRating = false; // stale -- refers to the just-undone move
+        // Unlike resetGame()/switchHumanColor(), nothing below clears the whole screen -- the
+        // rating line (see drawRatingLine()) needs an explicit blank or a stale rating stays put.
+        drawRatingLine("");
         pieceSelected = false;
         selectedRow = -1;
         selectedCol = -1;
@@ -1027,8 +1048,7 @@ void loop() {
       if (haveReplyScore && humanMoveCount >= RATING_STARTS_AT_MOVE) {
         int actualScoreForHuman = -replyScore; // negamax: reply score is from the AI's side
         int loss = pendingMoveRatingBestScore - actualScoreForHuman;
-        drawStatus(rateMoveLoss(loss));
-        delay(900);
+        drawRatingLine(rateMoveLoss(loss));
       }
       havePendingMoveRating = false;
     }

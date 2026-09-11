@@ -231,13 +231,26 @@ void showTurnStatus() {
 // between what micro-Max's own search would have scored as the best move
 // from a position, and what the human's actual move left it scored at (see
 // the AI-turn branch's use of this). Units are micro-Max's own internal
-// score scale (see mmW[]'s piece-value comment in micromax.cpp -- roughly
-// single digits per pawn up to the low 20s for a queen, not centipawns), and
-// these cutoffs are a first rough guess, not calibrated against real games
-// -- easy to retune here once played with.
+// score scale, not centipawns -- captures run roughly 40-300+ units
+// depending on the piece taken (mmW[]'s piece-value comment in micromax.cpp
+// has the per-piece scale; the `37x` multiplier applying it is in mmD()'s
+// capture-scoring line).
+//
+// Calibrated off-device (not just a guess): self-played several thousand
+// moves across all four difficulty levels, comparing three move-quality
+// tiers (the engine's own choice, a "take the best capture / give check"
+// heuristic, and a uniformly random legal move) against the same loss
+// formula used here. The engine's own choice clustered at 0 with a noise
+// tail out to ~250-300 (inherent to comparing two independent searches --
+// even the objectively same move doesn't always score identically twice);
+// the heuristic and random tiers spread further, with random's tail
+// reaching well past 1000 on genuine blunders. 150/400 sits so the engine's
+// own noise tail lands mostly in Good, with real mistakes needing to
+// clearly exceed it to read as OK, and only the heavier blunder tail as Not
+// the best.
 const char *rateMoveLoss(int loss) {
-  if (loss <= 2) return "Good move!";
-  if (loss <= 8) return "OK move";
+  if (loss <= 150) return "Good move!";
+  if (loss <= 400) return "OK move";
   return "Not the best";
 }
 
@@ -1046,7 +1059,14 @@ void loop() {
     // gaps between perfectly reasonable choices aren't a meaningful "mistake" to flag.
     if (havePendingMoveRating) {
       if (haveReplyScore && humanMoveCount >= RATING_STARTS_AT_MOVE) {
-        int actualScoreForHuman = -replyScore; // negamax: reply score is from the AI's side
+        // [cyd-chess fix] replyScore is already mmQ from the AI's own root call -- "value for
+        // whoever's next to move after its move", i.e. the human's own perspective directly (see
+        // microMaxGetBestMove()'s comment in micromax.cpp). No negation: an earlier version of
+        // this line assumed replyScore needed flipping from the AI's side, which double-negated
+        // it against pendingMoveRatingBestScore's own (correct) negation and silently produced a
+        // wrong-signed loss for essentially every move -- caught by an off-device calibration
+        // run, not on-device play.
+        int actualScoreForHuman = replyScore;
         int loss = pendingMoveRatingBestScore - actualScoreForHuman;
         drawRatingLine(rateMoveLoss(loss));
       }

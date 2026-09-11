@@ -139,7 +139,19 @@ static void mmEvalTask(void *) {
 
   mmN = 0;
   mmK = mmI;
-  int score = mmD(-mmI, mmI, mmQ, mmO, 1, 3);
+  mmD(-mmI, mmI, mmQ, mmO, 1, 3);
+  // [cyd-chess fix] mmD()'s return value is a throwaway sentinel (the search window's own upper
+  // bound `l`), not an evaluation -- once the root search's node budget triggers its internal
+  // "time's up, commit this move" path (every real call, at any node budget actually used here),
+  // it takes a dedicated early-return path purely to confirm the move was found and applied,
+  // returning `l` unconditionally rather than the position value. mmQ is the only other place a
+  // real evaluation gets written (right where that same early return sets it, one line inside
+  // mmD() -- `mmQ=-e-i`), so read it here, before the restore below undoes it. Verified
+  // off-device against a from-scratch material count: mmQ tracks captures with the correct sign
+  // and the expected ~37x-per-material-point scale. mmQ at this point represents "value for
+  // whoever's next to move" -- the opponent of whoever this root search just found a move for --
+  // so the human's own-perspective score is its negation.
+  int score = -mmQ;
 
   memcpy(mmB, savedB, sizeof(mmB));
   mmJ = savedJ; mmZ = savedZ; mmk = savedk; mmR = savedR; mmQ = savedQ; mmO = savedO;
@@ -358,8 +370,13 @@ void microMaxGetBestMove(int &fromRow, int &fromCol, int &toRow, int &toCol, int
  // wrong.) Reset here so every move gets the real search budget.
  mmN = 0;
  mmK = mmI;
- int score = mmD(-mmI, mmI, mmQ, mmO, 1, 3);
- if (outScore) *outScore = score;
+ mmD(-mmI, mmI, mmQ, mmO, 1, 3);
+ // [cyd-chess fix] see mmEvalTask()'s comment above -- mmD()'s return value is a dead end; mmQ
+ // holds the real evaluation instead. No negation here (unlike mmEvalTask()): state isn't
+ // reverted after this call, so mmQ already represents "value for whoever's next to move" --
+ // the human, the opponent of whoever this call just found a move for -- which is exactly what
+ // the caller wants.
+ if (outScore) *outScore = mmQ;
  fromRow = mmLastX / 16; fromCol = mmLastX & 7;
  toRow = mmLastY / 16;   toCol = mmLastY & 7;   // &7 also drops mmLastY's S/double-move flag bit
 }

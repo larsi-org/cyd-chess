@@ -6,6 +6,18 @@ and substantially rebuilt: a real chess engine, a small opening book, full move 
 menu for color/difficulty/piece set/new game, pawn promotion, single-level undo, persistence
 across a power cycle, and a rough good/OK/inaccurate rating of each of your own moves.
 
+- Strong chess engine (micro-Max: negamax, quiescence search, transposition table)
+- Selectable handicap (4 difficulty levels)
+- Highlights legal moves for the selected piece
+- Move Rating -- rates each of your moves against the engine's own judgment
+- Opening Book (14 named lines)
+- 3 selectable piece sets
+- Switch sides mid-game
+- Full rules -- castling, en passant, pawn promotion, and complete draw detection
+  (stalemate, repetition, 50-move rule, insufficient material)
+- Undo (1 move)
+- Survives a power cycle
+
 **Full write-up:** https://larsi.org/make/cyd-chess/
 
 ## Hardware & libraries

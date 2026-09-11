@@ -9,6 +9,11 @@
 
 #include "chess_rules.h" // GameState
 
+// Move-rating's grace-period counter (cyd-chess.ino) -- travels with the snapshot below for the
+// same reason plyCount does (see undo.cpp): an undone move should also roll back how many moves
+// the human has made, or the rating grace period could end early relative to the reverted game.
+extern int humanMoveCount;
+
 void invalidateUndoSnapshot();
 void saveUndoSnapshot(GameState &g);
 // Returns false (and leaves g untouched) if nothing's been saved yet this

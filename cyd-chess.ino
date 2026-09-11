@@ -156,6 +156,17 @@ Move pendingPromotionMove;
 int pendingMoveRatingBestScore = 0;
 bool havePendingMoveRating = false;
 
+// How many moves the current human has made this game -- gates the rating toast (see
+// RATING_STARTS_AT_MOVE below) rather than showing one on the opening moves, where a shallow
+// search's small score gaps between perfectly reasonable choices aren't a meaningful "mistake".
+// Neither existing counter fits this: gs.halfmoveClock resets on every pawn move/capture (it's
+// only for the 50-move rule), and book.cpp's plyCount counts *both* sides' plies for opening-book
+// tracking -- reusing it here would tie this feature to the book's own bookkeeping. Incremented
+// in completeHumanMove(), reset in resetGame(), and included in undo.cpp's snapshot so Undo rolls
+// it back too (same treatment plyCount already gets, for the same reason).
+int humanMoveCount = 0;
+const int RATING_STARTS_AT_MOVE = 3;
+
 // True when the human picked Black -- the board is drawn (and touch input
 // read) rotated 180 so the human's own pieces are nearest the bottom,
 // matching how a real board looks from either side of the table. Computed
@@ -306,6 +317,7 @@ void switchHumanColor(int newColor) {
   // made by a different color's human -- so don't offer to undo across one.
   invalidateUndoSnapshot();
   havePendingMoveRating = false; // same reasoning -- stale, refers to the old color's move
+  humanMoveCount = 0; // fresh grace period -- a new human (color-wise) is now making decisions
   pieceSelected = false;
   selectedRow = -1;
   selectedCol = -1;
@@ -366,6 +378,7 @@ void resetGame() {
   recordPosition(gs); // the starting position itself counts as its own first occurrence
   invalidateUndoSnapshot();
   havePendingMoveRating = false; // stale -- refers to a move from the previous game
+  humanMoveCount = 0; // fresh grace period for the new game
   pieceSelected = false;
   selectedRow = -1;
   selectedCol = -1;
@@ -537,6 +550,7 @@ void completeHumanMove(Move &m) {
   havePendingMoveRating = microMaxConsumeBackgroundEval(pendingMoveRatingBestScore);
 
   saveUndoSnapshot(gs); // captures the position as it stood right before this move
+  humanMoveCount++;
   applyMove(gs, m);
   recordPosition(gs);
   savePersistedGame(gs);
@@ -1006,9 +1020,11 @@ void loop() {
 
     // Rate the human's just-finished move against this reply search's own score, now that one
     // exists (see haveReplyScore's comment above -- a book or blunder-difficulty AI move never
-    // runs a real search, so there's nothing to rate against on those turns).
+    // runs a real search, so there's nothing to rate against on those turns). Skipped for the
+    // human's first couple of moves regardless -- this early, a shallow search's small score
+    // gaps between perfectly reasonable choices aren't a meaningful "mistake" to flag.
     if (havePendingMoveRating) {
-      if (haveReplyScore) {
+      if (haveReplyScore && humanMoveCount >= RATING_STARTS_AT_MOVE) {
         int actualScoreForHuman = -replyScore; // negamax: reply score is from the AI's side
         int loss = pendingMoveRatingBestScore - actualScoreForHuman;
         drawStatus(rateMoveLoss(loss));

@@ -29,6 +29,7 @@ struct UndoSnapshot {
   BookMove moveHistory[BOOK_MAX_PLY];
   uint32_t positionHistory[MAX_POSITION_HISTORY];
   int positionHistoryCount;
+  int humanMoveCount; // move-rating's grace-period counter -- see undo.h
 };
 UndoSnapshot undoSnapshot = { false };
 
@@ -52,6 +53,7 @@ void saveUndoSnapshot(GameState &g) {
   memcpy(undoSnapshot.moveHistory, moveHistory, sizeof(moveHistory));
   memcpy(undoSnapshot.positionHistory, positionHistory, sizeof(positionHistory));
   undoSnapshot.positionHistoryCount = positionHistoryCount;
+  undoSnapshot.humanMoveCount = humanMoveCount;
 }
 
 bool restoreUndoSnapshot(GameState &g) {
@@ -69,6 +71,7 @@ bool restoreUndoSnapshot(GameState &g) {
   memcpy(moveHistory, undoSnapshot.moveHistory, sizeof(moveHistory));
   memcpy(positionHistory, undoSnapshot.positionHistory, sizeof(positionHistory));
   positionHistoryCount = undoSnapshot.positionHistoryCount;
+  humanMoveCount = undoSnapshot.humanMoveCount;
   undoSnapshot.valid = false; // one level only -- used up until the next move
   return true;
 }

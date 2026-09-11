@@ -172,10 +172,25 @@ static void mmEvalTask(void *) {
 // it 64KB anyway (an earlier version of this code did) meant requesting an extra 64KB from the
 // heap on every single human turn, on top of loopTask's own 64KB and micro-Max's ~50KB hash
 // table already sitting in this ESP32's ~320KB of internal SRAM -- plausible enough to exhaust
-// available heap that xTaskCreatePinnedToCore() started failing outright. 16KB is generous
-// headroom for a plain recursive search with no display/network buffers of its own (confirmed
-// against the high-water mark logged above).
-static const uint32_t MM_EVAL_STACK_BYTES = 16 * 1024;
+// available heap that xTaskCreatePinnedToCore() started failing outright.
+//
+// [cyd-chess fix, round 2] The first cut of this guessed 16KB was "generous headroom" without
+// ever actually confirming that against the high-water-mark diagnostic below on real hardware --
+// which turned out to matter: real-hardware testing hit a hang (see round 2's fix on the wait
+// loops below) consistent with the eval task never reaching that diagnostic line at all, i.e.
+// a stack overflow before then. mmD()'s own worst-case recursion -- iterative deepening plus
+// quiescence-search extensions, capped at d<98 -- is hard to bound tightly by hand; 32KB gives
+// real margin over a rough per-frame estimate (~15 ints/9 chars/a pointer plus call overhead,
+// call it 150-250 bytes/frame) without still requesting the same 64KB this fix exists to avoid.
+static const uint32_t MM_EVAL_STACK_BYTES = 32 * 1024;
+
+// [cyd-chess fix, round 2] How long microMaxConsumeBackgroundEval()/microMaxSyncBackgroundEval()
+// will wait for a running eval before giving up on it -- see their own comments for why this
+// exists. 15s is 3x the ~5s worst-case Expert-difficulty search time already documented on
+// mmNodeBudget, above -- generous enough that a real, still-legitimately-running search essentially
+// never hits it, while bounding how long a genuinely stuck task (a crash, not just slowness) can
+// hang the whole game before this gives up and lets play continue without that move's rating.
+static const unsigned long MM_EVAL_TIMEOUT_MS = 15000;
 
 void microMaxStartBackgroundEval() {
   if (mmEvalState != MM_EVAL_IDLE) return; // already covers the current position
@@ -196,7 +211,24 @@ bool microMaxBackgroundEvalReady() {
 
 bool microMaxConsumeBackgroundEval(int &outScore) {
   if (mmEvalState == MM_EVAL_IDLE) return false; // never started
-  while (mmEvalState == MM_EVAL_RUNNING) vTaskDelay(1);
+  // [cyd-chess fix, round 2] Bounded, not an unconditional wait -- real-hardware testing hit a
+  // hang here that required a power cycle to clear, consistent with the eval task dying (most
+  // likely a stack overflow -- see MM_EVAL_STACK_BYTES above) rather than merely running long.
+  // A creation failure alone (round 1's fix) can't explain it: that path already resets
+  // mmEvalState to IDLE immediately, never leaving it stuck at RUNNING. A task that starts but
+  // never reaches its own READY transition is the one case round 1 didn't cover -- this bounds
+  // it. Trading a small theoretical risk (proceeding while a merely-slow, not-actually-stuck task
+  // is still mid-write to mmB) for a much bigger practical one (the game becoming unplayable) is
+  // the right call on a device whose whole point is to stay playable.
+  unsigned long start = millis();
+  while (mmEvalState == MM_EVAL_RUNNING) {
+    if (millis() - start > MM_EVAL_TIMEOUT_MS) {
+      Serial.println("[warn] mmEval task timed out -- abandoning it, skipping this move's rating");
+      mmEvalState = MM_EVAL_IDLE;
+      return false;
+    }
+    vTaskDelay(1);
+  }
   outScore = mmEvalScore;
   mmEvalState = MM_EVAL_IDLE;
   return true;
@@ -209,9 +241,17 @@ bool microMaxConsumeBackgroundEval(int &outScore) {
 // microMaxInit()/microMaxApplyMove()/microMaxGetBestMove() below all call this themselves;
 // undo.cpp's direct mmB/etc. access (it isn't routed through any of those three) calls the
 // public microMaxSyncBackgroundEval() wrapper instead. A no-op in the far more common case of no
-// eval in flight.
+// eval in flight. Bounded the same way and for the same reason as
+// microMaxConsumeBackgroundEval() above.
 void microMaxSyncBackgroundEval() {
-  while (mmEvalState == MM_EVAL_RUNNING) vTaskDelay(1);
+  unsigned long start = millis();
+  while (mmEvalState == MM_EVAL_RUNNING) {
+    if (millis() - start > MM_EVAL_TIMEOUT_MS) {
+      Serial.println("[warn] mmEval task timed out -- abandoning it");
+      break;
+    }
+    vTaskDelay(1);
+  }
   mmEvalState = MM_EVAL_IDLE; // discard -- whoever's about to mutate state didn't ask for this
 }
 

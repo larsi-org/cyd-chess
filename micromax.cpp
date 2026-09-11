@@ -144,17 +144,38 @@ static void mmEvalTask(void *) {
   memcpy(mmB, savedB, sizeof(mmB));
   mmJ = savedJ; mmZ = savedZ; mmk = savedk; mmR = savedR; mmQ = savedQ; mmO = savedO;
 
+  // Same diagnostic cyd-chess.ino's setup() prints for loopTask -- lets actual mmD() recursion
+  // depth be checked/tuned against MM_EVAL_STACK_BYTES below on real hardware.
+  Serial.printf("[diag] mmEval task stack high-water mark: %u bytes free\n",
+                (unsigned)uxTaskGetStackHighWaterMark(NULL));
+
   mmEvalScore = score;
   mmEvalState = MM_EVAL_READY;
   vTaskDelete(nullptr);
 }
 
+// [cyd-chess fix] cyd-chess.ino's loopTask needed its stack bumped to 64KB (see its own comment)
+// because setup() itself -- touch/display/book/menu init -- nearly exhausted it, not because of
+// mmD()'s own recursion. This task never runs setup(), only mmD(), so it needs far less; giving
+// it 64KB anyway (an earlier version of this code did) meant requesting an extra 64KB from the
+// heap on every single human turn, on top of loopTask's own 64KB and micro-Max's ~50KB hash
+// table already sitting in this ESP32's ~320KB of internal SRAM -- plausible enough to exhaust
+// available heap that xTaskCreatePinnedToCore() started failing outright. 16KB is generous
+// headroom for a plain recursive search with no display/network buffers of its own (confirmed
+// against the high-water mark logged above).
+static const uint32_t MM_EVAL_STACK_BYTES = 16 * 1024;
+
 void microMaxStartBackgroundEval() {
   if (mmEvalState != MM_EVAL_IDLE) return; // already covers the current position
   mmEvalState = MM_EVAL_RUNNING;
-  // Same 64KB cyd-chess.ino gives the main loopTask -- mmD()'s recursion
-  // needs it just as much running here.
-  xTaskCreatePinnedToCore(mmEvalTask, "mmEval", 64 * 1024, nullptr, 1, nullptr, 0);
+  // [cyd-chess fix] A failed task creation (e.g. heap too fragmented for the stack request) must
+  // not leave mmEvalState stuck at RUNNING forever -- that would hang microMaxConsumeBackgroundEval()'s
+  // wait loop on the very next move, forever, since no task will ever exist to move it to READY.
+  BaseType_t created = xTaskCreatePinnedToCore(mmEvalTask, "mmEval", MM_EVAL_STACK_BYTES, nullptr, 1, nullptr, 0);
+  if (created != pdPASS) {
+    Serial.println("[warn] mmEval task creation failed -- skipping this move's rating");
+    mmEvalState = MM_EVAL_IDLE;
+  }
 }
 
 bool microMaxBackgroundEvalReady() {

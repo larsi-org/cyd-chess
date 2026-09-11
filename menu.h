@@ -1,3 +1,8 @@
+// menu.h
+// MIT License
+// https://opensource.org/licenses/MIT
+// Copyright (c) 2026, Lars Schumann, larsi.org@gmail.com
+//
 // Menu/difficulty/promotion screens for cyd-chess -- the standalone-
 // takeover UI screens and their touch-hit-testing, split out of
 // cyd-chess.ino once it grew past ~1000 lines. Needs tft/touch (declared

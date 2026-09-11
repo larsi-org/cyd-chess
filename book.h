@@ -1,3 +1,8 @@
+// book.h
+// MIT License
+// https://opensource.org/licenses/MIT
+// Copyright (c) 2026, Lars Schumann, larsi.org@gmail.com
+//
 // Opening book for cyd-chess -- declarations only; the actual line data and
 // lookup logic live in book.cpp. See that file for the real documentation.
 #ifndef CYD_CHESS_BOOK_H

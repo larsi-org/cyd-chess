@@ -1,3 +1,8 @@
+// persistence.cpp
+// MIT License
+// https://opensource.org/licenses/MIT
+// Copyright (c) 2026, Lars Schumann, larsi.org@gmail.com
+//
 // Whole-game persistence for cyd-chess -- see persistence.h for the public
 // interface. Deliberately its own module: needs zero display/touch
 // dependency (only the already-extern-exposed state from chess_rules.h/

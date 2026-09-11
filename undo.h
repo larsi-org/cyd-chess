@@ -1,3 +1,8 @@
+// undo.h
+// MIT License
+// https://opensource.org/licenses/MIT
+// Copyright (c) 2026, Lars Schumann, larsi.org@gmail.com
+//
 // Single-level undo for cyd-chess -- declarations only; see undo.cpp for
 // the real documentation and implementation. Deliberately has no display/
 // touch dependency (only chess_rules.h's GameState plus the already-

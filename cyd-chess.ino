@@ -30,6 +30,7 @@
 #include <TFT_eSPI.h>
 #include <XPT2046_Touchscreen.h>
 #include "chess_rules.h"
+#include "color565.h"
 #include "pieces.h"
 #include "book.h"
 #include "micromax.h"
@@ -93,19 +94,19 @@ XPT2046_Touchscreen touch(TOUCH_CS_PIN, TOUCH_IRQ_PIN);
 #define STATUS_Y 260
 #define STATUS_H 16
 
-// TFT Colors
+// TFT Colors, from color565.h's shared web-safe palette (larsi.org/graphics/colors/).
 // Light/dark square colors match WinBoard/XBoard's own classic default
 // theme (lightSquareColor #C8C365, darkSquareColor #77A26D) -- yellow
 // gave white pieces/outlines too little contrast against it.
-#define COLOR_LIGHT_SQ  0xCE0C
-#define COLOR_DARK_SQ   0x750D
-#define COLOR_SELECTED  0x07E0
-#define COLOR_MOVE_DOT  0x07FF
-#define COLOR_BG        0x0000
-#define COLOR_WHITE_P   0xFFFF
-#define COLOR_BLACK_P   0x18C3
-#define COLOR_TEXT      0xFFFF
-#define COLOR_STATUS_BG 0x2104
+constexpr uint16_t COLOR_LIGHT_SQ  = COLOR565_DARK_KHAKI;
+constexpr uint16_t COLOR_DARK_SQ   = COLOR565_DARK_SEA_GREEN4;
+constexpr uint16_t COLOR_SELECTED  = COLOR565_LIME;
+constexpr uint16_t COLOR_MOVE_DOT  = COLOR565_CYAN;
+constexpr uint16_t COLOR_BG        = COLOR565_BLACK;
+constexpr uint16_t COLOR_WHITE_P   = COLOR565_WHITE;
+constexpr uint16_t COLOR_BLACK_P   = COLOR565_BLACK;
+constexpr uint16_t COLOR_TEXT      = COLOR565_WHITE;
+constexpr uint16_t COLOR_STATUS_BG = COLOR565_DARK_CHARCOAL;
 
 // ─── Globals ───────────────────────────────────────────────────────────────
 GameState gs;
@@ -260,8 +261,8 @@ const char *lastGameOverMsg = "";
 
 void drawGameOver(const char *msg) {
   lastGameOverMsg = msg;
-  tft.fillRect(20, 100, 200, 60, TFT_RED);
-  tft.setTextColor(TFT_WHITE, TFT_RED);
+  tft.fillRect(20, 100, 200, 60, COLOR565_RED);
+  tft.setTextColor(COLOR565_WHITE, COLOR565_RED);
   tft.setTextSize(2);
   tft.setCursor(30, 115);
   tft.print(msg);
@@ -302,7 +303,7 @@ void drawPiece(int row, int col, int piece, int pieceColor) {
   if (idx < 0 || idx > 5) return;
 
   uint16_t fg = (pieceColor == WHITE_PIECE) ? COLOR_WHITE_P : COLOR_BLACK_P;
-  uint16_t outline = (pieceColor == WHITE_PIECE) ? TFT_BLACK : TFT_WHITE;
+  uint16_t outline = (pieceColor == WHITE_PIECE) ? COLOR565_BLACK : COLOR565_WHITE;
 
   drawPieceBitmap(x, y, PIECE_FILL_SETS[pieceSet][idx], fg);
   drawPieceBitmap(x, y, PIECE_OUTLINE_SETS[pieceSet][idx], outline);
@@ -458,7 +459,7 @@ void drawBoard(GameState &gs) {
   // File letters sit in the dedicated strip below the board (on the plain
   // black background there, so a bright color reads cleanly).
   tft.setTextSize(1);
-  tft.setTextColor(TFT_WHITE, COLOR_BG);
+  tft.setTextColor(COLOR565_WHITE, COLOR_BG);
   for (int i = 0; i < 8; i++) {
     int boardCol = boardFlipped() ? 7 - i : i;
     tft.setCursor(BOARD_OFFSET_X + i * SQUARE_SIZE + 12, BOARD_OFFSET_Y + 8 * SQUARE_SIZE + 2);
@@ -478,7 +479,7 @@ void drawBoard(GameState &gs) {
   for (int i = 0; i < 8; i++) {
     int boardRow = boardFlipped() ? 7 - i : i;
     bool sqIsLight = (i % 2 == 0);
-    tft.setTextColor(sqIsLight ? TFT_BLACK : TFT_WHITE, sqIsLight ? COLOR_LIGHT_SQ : COLOR_DARK_SQ);
+    tft.setTextColor(sqIsLight ? COLOR565_BLACK : COLOR565_WHITE, sqIsLight ? COLOR_LIGHT_SQ : COLOR_DARK_SQ);
     tft.setCursor(BOARD_OFFSET_X + 2, BOARD_OFFSET_Y + i * SQUARE_SIZE + SQUARE_SIZE - 9);
     tft.print(8 - boardRow);
   }

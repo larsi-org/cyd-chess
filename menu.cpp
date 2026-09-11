@@ -1,3 +1,8 @@
+// menu.cpp
+// MIT License
+// https://opensource.org/licenses/MIT
+// Copyright (c) 2026, Lars Schumann, larsi.org@gmail.com
+//
 // Menu/difficulty/promotion screens for cyd-chess -- see menu.h for the
 // public interface.
 #include <Arduino.h> // strlen
@@ -5,6 +10,7 @@
 #include <XPT2046_Touchscreen.h>
 #include "menu.h"
 #include "chess_rules.h" // QUEEN/ROOK/BISHOP/KNIGHT (PROMO_PIECES, below)
+#include "color565.h"
 #include "pieces.h" // NUM_PIECE_SETS/PIECE_SET_NAMES
 
 // Defined in cyd-chess.ino -- the hardware objects every screen here draws
@@ -20,12 +26,14 @@ extern XPT2046_Touchscreen touch;
 #define TOUCH_X_MAX 3800
 #define TOUCH_Y_MIN 300
 #define TOUCH_Y_MAX 3700
-#define COLOR_BG      0x0000
-#define COLOR_WHITE_P 0xFFFF
-#define COLOR_BLACK_P 0x18C3
+// Values here must stay in sync with cyd-chess.ino's constants of the same name -- both now come
+// from color565.h's shared web-safe palette (larsi.org/graphics/colors/).
+constexpr uint16_t COLOR_BG      = COLOR565_BLACK;
+constexpr uint16_t COLOR_WHITE_P = COLOR565_WHITE;
+constexpr uint16_t COLOR_BLACK_P = COLOR565_BLACK;
 
 void drawTextButton(int x, int y, int w, int h, const char *label,
-                     uint16_t fillColor, uint16_t borderColor, uint16_t textColor = TFT_WHITE) {
+                     uint16_t fillColor, uint16_t borderColor, uint16_t textColor = COLOR565_WHITE) {
   tft.fillRoundRect(x, y, w, h, 4, fillColor);
   tft.drawRoundRect(x, y, w, h, 4, borderColor);
   tft.setTextSize(1);
@@ -56,13 +64,13 @@ bool isTouchInButton(int x, int y, int w, int h) {
 // Was "NEW GAME" -- now opens the color-choice menu instead of resetting
 // directly, same button slot/color.
 void drawMenuButton() {
-  drawTextButton(MENU_BOTTOM_BTN_X, BTN_Y, BTN_W, BTN_H, "MENU", TFT_DARKGREEN, TFT_GREEN);
+  drawTextButton(MENU_BOTTOM_BTN_X, BTN_Y, BTN_W, BTN_H, "MENU", COLOR565_DARK_GREEN, COLOR565_LIME);
 }
 
 // Amber rather than Menu's green, so the two are easy to tell apart at
 // a glance -- a common "undo" color and distinct from "start over".
 void drawUndoButton() {
-  drawTextButton(UNDO_BTN_X, BTN_Y, BTN_W, BTN_H, "UNDO", 0x8400 /* dark amber */, TFT_ORANGE);
+  drawTextButton(UNDO_BTN_X, BTN_Y, BTN_W, BTN_H, "UNDO", COLOR565_GOLD4, COLOR565_ORANGE);
 }
 
 bool isTouchOnMenuButton() {
@@ -98,12 +106,12 @@ const char *STRENGTH_NAMES[4] = {"EASY", "MEDIUM", "HARD", "EXPERT"};
 void drawMenuScreen(int humanColor, int aiStrength, int pieceSet) {
   tft.fillScreen(COLOR_BG);
   tft.setTextSize(2);
-  tft.setTextColor(TFT_YELLOW, COLOR_BG);
+  tft.setTextColor(COLOR565_YELLOW, COLOR_BG);
   tft.setCursor(60, 28);
   tft.print("Menu");
 
   drawTextButton(MENU_BTN_X, MENU_NEWGAME_BTN_Y, MENU_BTN_W, MENU_BTN_H,
-                 "NEW GAME", TFT_DARKGREEN, TFT_GREEN);
+                 "NEW GAME", COLOR565_DARK_GREEN, COLOR565_LIME);
 
   // A toggle, not a submenu -- only two values, so tapping it flips straight
   // to the other color (cyd-chess.ino's loop()) rather than opening a
@@ -114,18 +122,18 @@ void drawMenuScreen(int humanColor, int aiStrength, int pieceSet) {
   char colorLabel[16];
   snprintf(colorLabel, sizeof(colorLabel), "PLAYER: %s", humanColor == WHITE_PIECE ? "WHITE" : "BLACK");
   uint16_t colorFill = (humanColor == WHITE_PIECE) ? COLOR_WHITE_P : COLOR_BLACK_P;
-  uint16_t colorInk  = (humanColor == WHITE_PIECE) ? TFT_BLACK : TFT_WHITE;
+  uint16_t colorInk  = (humanColor == WHITE_PIECE) ? COLOR565_BLACK : COLOR565_WHITE;
   drawTextButton(MENU_BTN_X, MENU_COLOR_BTN_Y, MENU_BTN_W, MENU_BTN_H,
                  colorLabel, colorFill, colorInk, colorInk);
 
   char diffLabel[24];
   snprintf(diffLabel, sizeof(diffLabel), "DIFFICULTY: %s", STRENGTH_NAMES[aiStrength]);
   drawTextButton(MENU_BTN_X, MENU_DIFF_BTN_Y, MENU_BTN_W, MENU_BTN_H,
-                 diffLabel, TFT_NAVY, TFT_CYAN, TFT_WHITE);
+                 diffLabel, COLOR565_DARK_BLUE, COLOR565_CYAN, COLOR565_WHITE);
   char pieceSetLabel[24];
   snprintf(pieceSetLabel, sizeof(pieceSetLabel), "PIECES: %s", PIECE_SET_NAMES[pieceSet]);
   drawTextButton(MENU_BTN_X, MENU_PIECESET_BTN_Y, MENU_BTN_W, MENU_BTN_H,
-                 pieceSetLabel, TFT_PURPLE, TFT_MAGENTA, TFT_WHITE);
+                 pieceSetLabel, COLOR565_PURPLE, COLOR565_MAGENTA, COLOR565_WHITE);
 }
 
 bool isTouchOnMenuNewGameButton() {
@@ -158,14 +166,14 @@ bool isTouchOnMenuPieceSetButton() {
 void drawDifficultyMenu() {
   tft.fillScreen(COLOR_BG);
   tft.setTextSize(2);
-  tft.setTextColor(TFT_YELLOW, COLOR_BG);
+  tft.setTextColor(COLOR565_YELLOW, COLOR_BG);
   tft.setCursor(28, 50);
   tft.print("Difficulty");
 
   // Light-to-dark progression (green..red), text color kept readable on each.
-  uint16_t fill[4]    = {TFT_GREEN, TFT_YELLOW, TFT_ORANGE, TFT_RED};
-  uint16_t border[4]  = {TFT_BLACK, TFT_BLACK,  TFT_BLACK,  TFT_WHITE};
-  uint16_t textCol[4] = {TFT_BLACK, TFT_BLACK,  TFT_BLACK,  TFT_WHITE};
+  uint16_t fill[4]    = {COLOR565_LIME, COLOR565_YELLOW, COLOR565_ORANGE, COLOR565_RED};
+  uint16_t border[4]  = {COLOR565_BLACK, COLOR565_BLACK,  COLOR565_BLACK,  COLOR565_WHITE};
+  uint16_t textCol[4] = {COLOR565_BLACK, COLOR565_BLACK,  COLOR565_BLACK,  COLOR565_WHITE};
 
   for (int i = 0; i < 4; i++) {
     drawTextButton(DIFF_BTN_X, DIFF_BTN_Y(i), DIFF_BTN_W, DIFF_BTN_H,
@@ -192,13 +200,13 @@ bool isTouchOnDifficultyButton(int idx) {
 void drawPieceSetMenu() {
   tft.fillScreen(COLOR_BG);
   tft.setTextSize(2);
-  tft.setTextColor(TFT_YELLOW, COLOR_BG);
+  tft.setTextColor(COLOR565_YELLOW, COLOR_BG);
   tft.setCursor(30, 50);
   tft.print("Piece Set");
 
   for (int i = 0; i < NUM_PIECE_SETS; i++) {
     drawTextButton(PIECESET_BTN_X, PIECESET_BTN_Y(i), PIECESET_BTN_W, PIECESET_BTN_H,
-                   PIECE_SET_NAMES[i], TFT_PURPLE, TFT_MAGENTA, TFT_WHITE);
+                   PIECE_SET_NAMES[i], COLOR565_PURPLE, COLOR565_MAGENTA, COLOR565_WHITE);
   }
 }
 
@@ -224,12 +232,12 @@ const int PROMO_PIECES[4]  = {QUEEN, ROOK, BISHOP, KNIGHT};
 void drawPromotionMenu() {
   tft.fillScreen(COLOR_BG);
   tft.setTextSize(2);
-  tft.setTextColor(TFT_YELLOW, COLOR_BG);
+  tft.setTextColor(COLOR565_YELLOW, COLOR_BG);
   tft.setCursor(20, 40);
   tft.print("Promote to:");
   for (int i = 0; i < 4; i++) {
     drawTextButton(PROMO_BTN_X, PROMO_BTN_Y(i), PROMO_BTN_W, PROMO_BTN_H,
-                   PROMO_NAMES[i], TFT_NAVY, TFT_CYAN, TFT_WHITE);
+                   PROMO_NAMES[i], COLOR565_DARK_BLUE, COLOR565_CYAN, COLOR565_WHITE);
   }
 }
 

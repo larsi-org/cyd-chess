@@ -1,3 +1,8 @@
+// chess_rules.cpp
+// MIT License
+// https://opensource.org/licenses/MIT
+// Copyright (c) 2026, Lars Schumann, larsi.org@gmail.com
+//
 // Chess rules implementation for cyd-chess -- see chess_rules.h for the
 // public interface. Deliberately has no display or touch dependency; the
 // main .ino's drawing/touch-handling code is the only part of this sketch

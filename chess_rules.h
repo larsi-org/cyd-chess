@@ -1,3 +1,8 @@
+// chess_rules.h
+// MIT License
+// https://opensource.org/licenses/MIT
+// Copyright (c) 2026, Lars Schumann, larsi.org@gmail.com
+//
 // Pure chess rules for cyd-chess: piece/board representation, move
 // generation (castling/en-passant/promotion included), and
 // check/checkmate/stalemate detection. No display or touch dependency at

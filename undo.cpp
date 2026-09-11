@@ -1,3 +1,8 @@
+// undo.cpp
+// MIT License
+// https://opensource.org/licenses/MIT
+// Copyright (c) 2026, Lars Schumann, larsi.org@gmail.com
+//
 // Single-level undo for cyd-chess -- see undo.h for the public interface.
 //
 // One saved snapshot, taken right before the human's move is applied --

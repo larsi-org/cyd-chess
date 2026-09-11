@@ -1,3 +1,8 @@
+// book.cpp
+// MIT License
+// https://opensource.org/licenses/MIT
+// Copyright (c) 2026, Lars Schumann, larsi.org@gmail.com
+//
 // Opening book for cyd-chess -- see book.h for what's exposed to the rest of
 // the sketch (BookMove/BOOK_MAX_PLY, and the moveHistory/plyCount/outOfBook
 // globals this sketch's own undo snapshot has to reach directly). Everything

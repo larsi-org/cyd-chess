@@ -1,3 +1,8 @@
+// persistence.h
+// MIT License
+// https://opensource.org/licenses/MIT
+// Copyright (c) 2026, Lars Schumann, larsi.org@gmail.com
+//
 // Persists (or resumes) a full in-progress cyd-chess game -- board,
 // engine/book running state, and draw-detection history -- to the ESP32's
 // NVS flash via the Preferences library, so a power cycle mid-game can

@@ -2,20 +2,18 @@
 
 A touchscreen chess game for the ESP32-2432S028R "Cheap Yellow Display," started from
 [Schematik's guide](https://www.schematik.io/guides/esp32/build-a-touchscreen-chess-game-on-a-cheap-yellow-display)
-and substantially rebuilt: a real chess engine, a small opening book, full move and draw rules, a
-menu for color/difficulty/piece set/new game, pawn promotion, single-level undo, persistence
-across a power cycle, and a rough good/OK/inaccurate rating of each of your own moves.
+and substantially rebuilt from there.
 
-- Strong chess engine (micro-Max: negamax, quiescence search, transposition table)
-- Selectable handicap (4 difficulty levels)
 - Highlights legal moves for the selected piece
-- Move Rating -- rates each of your moves against the engine's own judgment
-- Opening Book (14 named lines)
 - 3 selectable piece sets
+- Strong chess engine (micro-Max: negamax, quiescence search, transposition table)
+- Opening Book (14 named lines)
+- Selectable handicap (4 difficulty levels)
 - Switch sides mid-game
 - Full rules -- castling, en passant, pawn promotion, and complete draw detection
   (stalemate, repetition, 50-move rule, insufficient material)
 - Undo (1 move)
+- Move Rating -- rates each of your moves against the engine's own judgment
 - Survives a power cycle
 
 **Full write-up:** https://larsi.org/make/cyd-chess/
